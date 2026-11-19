@@ -43,21 +43,32 @@ journal itself.
   handler can't be made safe by the runner alone.
 - **Keys are never logged**, and job payloads never appear in the server's log either.
 
-## Per-client limits *(next release)*
+## Per-client limits
 
-On the worker branch now: one address can't hold every connection or spend every request.
-`--rate-limit-per-addr` (100/s default, `429 rate_limited` + `Retry-After`), `--max-conns-per-addr`
-for untrusted peers, and `--max-conns-per-proxy` for trusted proxies — a proxy aggregates clients,
-so it gets its own allowance. `--trusted-proxy` (repeatable CIDR) is the trust line: the client
-address comes from `CF-Connecting-IP` **only** behind those ranges — list your proxy ranges
-precisely, since a too-wide range lets any caller name its own address. IPv6 counts per `/64` with
-a `/48` aggregate; v4-mapped addresses count as IPv4. Details:
-[configuration](/self-hosting/configuration/).
+One address can't hold every connection or spend every request. `--rate-limit-per-addr` (100/s
+default, `429 rate_limited` + `Retry-After`), `--max-conns-per-addr` for untrusted peers, and
+`--max-conns-per-proxy` for trusted proxies — a proxy aggregates clients, so it gets its own
+allowance. `--trusted-proxy` (repeatable CIDR) is the trust line: the client address comes from
+`CF-Connecting-IP` **only** behind those ranges — list your proxy ranges precisely, since a
+too-wide range lets any caller name its own address. IPv6 keys at `/64` with a `/48` aggregate;
+v4-mapped addresses count as IPv4. Details: [configuration](/self-hosting/configuration/).
 
-```sh not-run="needs the next release — the flags are on the worker branch, not yet on main"
-durable-server --journal journal --listen 127.0.0.1:58300 --trusted-proxy 103.21.244.0/22 \
-  --max-conns-per-proxy 512 --max-conns-per-addr 64 --rate-limit-per-addr 100
+```sh run=ops
+./target/release/durable-server --journal journal-trust --listen 127.0.0.1:58301 \
+  --trusted-proxy 10.0.0.0/8 --max-conns-per-proxy 512 >trust-server.log 2>&1 &
+TRUST=$!
+for _ in $(seq 1 100); do curl -sf http://127.0.0.1:58301/health >/dev/null && break; sleep 0.1; done
+curl -s http://127.0.0.1:58301/health
+kill $TRUST 2>/dev/null; wait $TRUST 2>/dev/null || true; rm -rf journal-trust trust-server.log
 ```
+
+```json output=ops
+{"ok":true}
+```
+
+The forged header rule, in words: `CF-Connecting-IP` is believed only from a peer inside
+`--trusted-proxy`, because anyone can set it — the rate key is the real client behind your proxy,
+never a header a stranger sent.
 
 ## Checklist
 

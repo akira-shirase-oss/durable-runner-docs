@@ -1,12 +1,12 @@
 ---
 title: The Inspector
-description: The bundled read-mostly UI — the run list newest-first with cancel, served same-origin at /inspector, key kept in sessionStorage only.
+description: The bundled UI — every operation the API and CLI offer, served same-origin at /inspector, keys kept in sessionStorage only, mutating actions behind a two-step confirm.
 ---
 
 The Inspector is the single-page UI `durable-server` serves at `/inspector` when it's started with
-`--ui-dir`. It's for looking, not scripting: a newest-first run list paged 50 at a time, each row
-showing id, `op_key`, live state, step count and finish time — plus a cancel button on anything
-that isn't terminal yet.
+`--ui-dir`. In v1.0.0 it covers **every operation the API and CLI offer**: submit, the newest-first
+run list, run detail, spec read-back, cancel, diagnostics, compact and backup — no separate
+dashboard needed.
 
 ```sh not-run="needs the Inspector's assets built from the app first — npm install && npm run build in its directory, then --ui-dir at server start"
 durable-server --journal journal --listen 127.0.0.1:58300 --ui-dir apps/inspector/build \
@@ -15,8 +15,8 @@ durable-server --journal journal --listen 127.0.0.1:58300 --ui-dir apps/inspecto
 
 Then open `http://127.0.0.1:58300/inspector` — a local page, on a local server.
 
-The two screens it has. First, the key field — the only thing standing between the page and the
-run list:
+The two screens most visits start on. First, the key field — the only thing standing between the
+page and the run list:
 
 ![The Inspector's key field, before a key is entered](/shots/inspector-key-1440.png)
 
@@ -25,27 +25,28 @@ anything live:
 
 ![The Inspector's run list: two finished runs and one queued](/shots/inspector-runs-1440.png)
 
-## The key, honestly stored
+## Which key does what
 
-Paste a key into the field at the top and the list loads — the Inspector calls `GET /jobs` with it
-as the Bearer token. Where that key lives is the security-relevant part, so it's precise:
+Paste a key into the field at the top and the list loads. The two keys have honest boundaries, and
+the UI enforces them the same way the API does:
 
-- **`sessionStorage`, and nothing else.** Not `localStorage`, not a cookie, not the URL — the key
-  dies with the tab, and a closed tab leaks nothing.
-- **Use `DURABLE_READ_KEY`.** Browsing is a read; the read key is all it needs. A
-  `sessionStorage`-scope leak then costs visibility, not control.
-- **The API key only if you'll cancel.** `POST /jobs/{id}/cancel` needs the write key — the UI says
-  so plainly if you cancel with a read key (`403`: *this key may only read*).
+- **`DURABLE_READ_KEY` views.** Listing runs and opening a run's detail are reads; the read key is
+  all they need. Day-to-day browsing should carry this one.
+- **The API key mutates.** Submit, cancel, spec read-back (the input may be customer content), and
+  the admin operations — diagnostics, compact, backup — all need `DURABLE_API_KEY`. Mutating
+  actions sit behind a two-step confirm so a stray click can't cancel a run.
 - **Or no key at all** on an `--open-reads` server — which, being loopback-only, means your own
   machine anyway.
+
+Where the key lives is the security-relevant part, so it's precise: **`sessionStorage`, and
+nothing else.** Not `localStorage`, not a cookie, never the URL — the key dies with the tab, a
+closed tab leaks nothing, and *Forget keys* clears it on demand. The key is never baked into the
+build and never sent anywhere but the same-origin API.
 
 ## Same-origin by design
 
 The Inspector is served by `durable-server` itself, so its API calls are relative — no CORS, no
-configuration, no second origin to trust. It only speaks `GET /jobs` (paged with `before`,
-newest-first) and `POST /jobs/{id}/cancel`; it has no admin surface and shows no submitted input —
-`GET /jobs/{id}/spec` stays API-key territory and the UI never calls it.
-
-What it won't do: submit work, read specs, touch admin routes, or persist anything beyond that one
-`sessionStorage` slot. For everything it can't do, the [CLI](/cli/) and the
-[HTTP API](/api/) are the tools.
+configuration, no second origin to trust. Light and dark themes use semantic tokens rather than a
+baked palette, and the two-row phone layout keeps run ids, keys and the cancel action unclipped at
+390 px. What it never does: send your key anywhere but the origin that served it, or persist
+anything beyond that one `sessionStorage` slot.

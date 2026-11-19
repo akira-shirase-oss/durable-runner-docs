@@ -72,15 +72,32 @@ release whose journal format needs attention. Restores from backup are the rollb
 journal can't move forward ([backups](/self-hosting/backups/)).
 
 **What a restart costs, plainly:** an upgrade is a restart plus a replay, and unavailability grows
-with how many runs are queued. On a fast laptop the replay takes about 1 s at 100k live runs, 3 s
-at 300k, 9 s at 800k — so capacity headroom is also upgrade latency. While the server is down its
-socket doesn't answer at all; put Caddy's `lb_try_duration` (or your proxy's equivalent) in front
-and it holds incoming requests through the gap, so clients see a delay, not errors.
+with how many runs are queued. Measured on a fast laptop (release build, spawn → `/ready` = 200):
 
-```txt title="Caddyfile — hold requests across the restart" not-run="proxy tuning is yours"
+| queued runs | journal size | restart-to-ready |
+|---|---|---|
+| 100k | 161 MiB | **400 ms** |
+| 300k | 467 MiB | **599 ms** |
+| 800k | 1.2 GiB | **1,716 ms** |
+
+These are development observations — measure your own host the same way before promising a number
+(see [capacity](/self-hosting/capacity/)). While the server is down its socket doesn't answer at
+all; Caddy's `lb_try_duration` holds incoming requests through the gap and retries, so clients see
+added latency, never an error — and nothing reaches the old process, so even a submit is safe.
+
+```txt title="Caddyfile — the shipped values" not-run="proxy tuning is yours"
 runner.example.com {
 	reverse_proxy 127.0.0.1:58300 {
-		lb_try_duration 10s
+		lb_try_duration 15s
+		lb_try_interval 250ms
 	}
 }
 ```
+
+**The deploy kit ships with the product.** `deploy/` in the repository carries the hardened
+systemd unit, the Caddyfile above, `cloudflare-ips.sh` (feeds Cloudflare's ranges into both
+`--trusted-proxy` and Caddy's trusted proxies), `install.sh`, `upgrade.sh`, `rollback.sh`, a
+`format-guard.sh` that refuses to swap in a binary that can't read the journal, `smoke.sh` as the
+post-install gate, and the daily-backup timer. `upgrade.sh` and `rollback.sh` compare
+`--journal-format` — the highest record version a binary reads — against the journal's before
+touching it, so a downgrade that couldn't parse the journal fails closed instead of eating state.

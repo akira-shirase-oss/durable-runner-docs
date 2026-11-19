@@ -48,28 +48,46 @@ Plus the environment: `DURABLE_API_KEY` (required at startup, ≥ 32 chars) and 
 | `--backup-root <dir>` | — | enables `POST /admin/backup`; without it, `403 backups_disabled` |
 | `--compact-every-secs` | `0` | automatic compaction period; `0` means only on request (`POST /admin/compact`) |
 | `--max-snapshot-bytes` | `2147483648` (2 GiB) | a compaction whose snapshot would exceed this is refused `409 snapshot_over_budget` |
+| `--journal-format` | — | print the highest journal record version this binary can read, then exit — the deploy kit's format guard compares it to the journal's before an upgrade or rollback |
 
 ## Per-client limits
 
-*In the next release, on the worker branch — not on `main` yet.* One address shouldn't be able to
-hold every connection or spend every request: these flags bound per-client pressure at the edge.
+One address shouldn't be able to hold every connection or spend every request: these flags bound
+per-client pressure at the edge. All on by default — `0` disables any of them.
 
 | Flag | Default | Bound |
 |---|---|---|
-| `--rate-limit-per-addr` | `100` per second | requests one client address may start; over it, `429 rate_limited` with `Retry-After` |
-| `--max-conns-per-addr` | — | connections one untrusted address may hold at once |
-| `--max-conns-per-proxy` | — | connections one *trusted* proxy may hold — a proxy aggregates many clients, so it gets its own, larger allowance |
-| `--trusted-proxy <CIDR>` | — | repeatable: the proxy ranges the server believes. A client's address comes from `CF-Connecting-IP` **only** when the peer is inside a trusted range; otherwise the peer itself is the client |
+| `--rate-limit-per-addr` | `100` per second | requests one client address may start; a token bucket with a one-second burst, the address table itself bounded. Over it, `429 rate_limited` with `Retry-After` |
+| `--rate-limit-v6-prefix` | `64` | prefix bits an IPv6 client is keyed by — a /64 holds 2⁶⁴ addresses, so keying the full address would let one client mint unlimited buckets |
+| `--max-conns-per-addr` | `64` | connections one untrusted address may hold at once; past it the socket is closed at accept |
+| `--max-conns-per-proxy` | `4096` | connections one peer *inside* the trusted ranges may hold — a proxy's edge legitimately carries many real clients at once (the global `--max-connections` still bounds everything) |
+| `--trusted-proxy <CIDR>` | — | repeatable: the proxy ranges the server believes. A client's address comes from `CF-Connecting-IP` **only** when the peer is inside a trusted range — anyone can set that header, so it is believed from no one else |
 
-The counting shape matters behind NAT and on v6: IPv6 clients are counted per `/64` with a `/48`
-aggregate cap (a host hopping addresses inside its own prefix stays one client, and a whole /48
-can't hide a flood); IPv4-mapped IPv6 addresses count as IPv4. `429 rate_limited` is retryable —
-back off by `Retry-After`, resubmit with the same `op_key`.
+Inside a `/48` the per-address IPv6 buckets also share a `/48` aggregate at 10× the rate, so a
+host hopping addresses inside its own prefix stays one client and a whole /48 can't hide a flood;
+IPv4-mapped IPv6 addresses count as IPv4. `429 rate_limited` is retryable — back off by
+`Retry-After`, resubmit with the same `op_key`.
 
-```sh not-run="needs the next release — these flags are on the worker branch, not yet on main"
-durable-server --journal journal --listen 127.0.0.1:58300 \
-  --rate-limit-per-addr 100 --max-conns-per-addr 64 --max-conns-per-proxy 512 \
-  --trusted-proxy 103.21.244.0/22 --trusted-proxy 2400:cb00::/32
+A second instance with a low rate shows the shape — five requests a second per address, a ten-
+request burst, then the honest refusal:
+
+```sh run=ops
+./target/release/durable-server --journal journal-limits --listen 127.0.0.1:58301 \
+  --rate-limit-per-addr 5 --trusted-proxy 10.0.0.0/8 >limits-server.log 2>&1 &
+LIMITED=$!
+for _ in $(seq 1 100); do curl -sf http://127.0.0.1:58301/health >/dev/null && break; sleep 0.1; done
+for i in $(seq 1 10); do
+  curl -s -o /dev/null -w '%{http_code} ' -H "Authorization: Bearer $DURABLE_API_KEY" http://127.0.0.1:58301/jobs
+done; echo
+curl -si -H "Authorization: Bearer $DURABLE_API_KEY" http://127.0.0.1:58301/jobs | sed -n '1p;/retry-after/Ip;/rate_limited/p'
+kill $LIMITED 2>/dev/null; wait $LIMITED 2>/dev/null || true; rm -rf journal-limits limits-server.log
+```
+
+```text output=ops match=lines
+200 200 200 200 429 429 429 429 429 429 
+HTTP/1.1 429 Too Many Requests
+retry-after: 1
+{"error":"rate limited","code":"rate_limited"}
 ```
 
 ## The UI and the loophole

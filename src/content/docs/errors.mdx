@@ -103,7 +103,7 @@ date: Wed, 18 Nov 2026 00:00:00 GMT
 | 409 | `compaction_running` | a second `POST /admin/compact` while one runs |
 | 409 | `snapshot_over_budget` | a snapshot would exceed `--max-snapshot-bytes` |
 | 409 | `backup_exists` | that backup name is already taken |
-| 429 | `rate_limited` | over the per-address rate limit; `Retry-After` says when *(next release)* |
+| 429 | `rate_limited` | over the per-address rate limit; `Retry-After` says when to come back |
 | 500 | `internal` | a bug — the server's stderr has the detail |
 | 503 | `busy` | the journal's reserve or write window is full; retry later |
 | 503 | `at_capacity` | `--max-live-runs` or `--max-index-bytes` reached |

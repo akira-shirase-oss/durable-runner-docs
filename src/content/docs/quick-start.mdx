@@ -7,14 +7,15 @@ This page runs on this machine — it builds Durable Runner from source and runs
 `127.0.0.1`, where every example is real. By the end you will have submitted a job through the CLI
 and the HTTP API, watched it reach `done`, and seen why the same `op_key` gives the same run.
 
-**Durable Runner has no release binaries yet** — you build from source today; binaries ship with
-v1. You need a Rust toolchain (the repository pins one in `rust-toolchain.toml`, and rustup uses it
-automatically), `python3` for the example handler, and `curl`.
+**Durable Runner is at v1.0.0 with source builds** — no release binaries yet, so you build from
+source today; the clone below is at the `v1.0.0` tag. You need a Rust toolchain (the repository
+pins one in `rust-toolchain.toml`, and rustup uses it automatically), `python3` for the example
+handler, and `curl`.
 
 ## 1. Get the source and build
 
 ```sh run=quickstart step=install
-test -d durable-runner || git clone https://github.com/akira-shirase-oss/durable-runner.git
+test -d durable-runner || git clone --depth 1 -b v1.0.0 https://github.com/akira-shirase-oss/durable-runner.git
 cd durable-runner
 cargo build --release --locked -p durable-server -p durable-cli
 ```
@@ -38,7 +39,7 @@ HND=$!
 ./target/release/durable-server --journal journal --listen 127.0.0.1:58300 \
   --backup-root backups --handler step=http://127.0.0.1:58320/step >server.log 2>&1 &
 SRV=$!
-for i in $(seq 1 150); do curl -sf http://127.0.0.1:58300/health >/dev/null && break; kill -0 $SRV 2>/dev/null || { echo "server died; check server.log"; break; }; sleep 0.1; done
+for i in $(seq 1 150); do kill -0 $SRV 2>/dev/null || { echo "server died; check server.log"; exit 1; }; curl -sf http://127.0.0.1:58300/health >/dev/null && break; sleep 0.1; done
 export PATH="$PWD/target/release:$PATH"
 alias durable="durable-cli --server http://127.0.0.1:58300"
 ```

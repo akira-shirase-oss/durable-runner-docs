@@ -22,8 +22,8 @@ export SRV=$!
 echo $SRV >.srv.pid
 unset HANDLER_CMD HANDLER_PORT HANDLER_REG
 for _ in $(seq 1 150); do
-	curl -sf "$BASE/health" >/dev/null 2>&1 && return 0
 	kill -0 $SRV 2>/dev/null || { echo "the new server died; server.log follows" >&2; tail -40 server.log >&2; return 1; }
+	curl -sf "$BASE/health" >/dev/null 2>&1 && return 0
 	sleep 0.1
 done
 echo "server never became healthy; server.log follows" >&2
