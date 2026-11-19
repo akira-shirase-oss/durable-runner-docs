@@ -13,18 +13,25 @@
 	--card-bg-open: color-mix(in srgb, var(--sl-color-gray-6) 55%, var(--sl-color-accent-low));
 	--card-sheen: color-mix(in srgb, var(--sl-color-white) 4%, transparent);
 	--card-border-open: color-mix(in srgb, var(--sl-color-accent-low) 60%, var(--sl-color-hairline));
-	--card-muted: var(--sl-color-gray-3);
 	--chip-bg: color-mix(in srgb, var(--sl-color-gray-6) 70%, var(--sl-color-gray-5));
 	--card-attention: color-mix(in srgb, var(--sl-color-orange, #b7791f) 8%, transparent);
 	/* Status accents for chips and icons: Starlight's aside hues, not a product colour. */
 	--c-live: var(--sl-color-green, #3a7d5d);
 	--c-warn: var(--sl-color-orange, #b7791f);
-	/* Text-weight variants of the accents: the icon hues only reach ~3:1 on a card, so anything
-	 * that carries meaning as text uses a stronger mix that holds ≥4.5:1 on --chip-bg. */
-	--c-warn-text: color-mix(in srgb, var(--c-warn) 55%, var(--sl-color-text));
+	/* Text-weight variants: the *-high Starlight hues are the ones meant for text. NOTE the
+	 * inversion — in Starlight's light theme --sl-color-black is near-WHITE; --sl-color-text is
+	 * the reliable "dark in light, light in dark" token. scripts/design-contrast.test.mjs
+	 * resolves these against the real values. */
+	--c-warn-text: var(--sl-color-orange);
+	/* Muted text must clear 4.5:1 on every card surface; gray-3 only manages ~4.4 on dark. */
+	--card-muted: var(--sl-color-gray-2);
 }
 :root[data-theme='light'] {
-	--c-warn-text: color-mix(in srgb, var(--c-warn) 45%, var(--sl-color-black));
+	/* In the light theme the mid orange sits near the pale card's luminance — icons and text both
+	 * take the "high" hue Starlight keeps for that theme. */
+	--c-warn: var(--sl-color-orange-high);
+	--c-warn-text: var(--sl-color-orange-high);
+	--card-muted: var(--sl-color-gray-3);
 }
 
 /* Visually hidden but announced — for headings and table cells that need a name, not ink. */

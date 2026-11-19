@@ -240,7 +240,7 @@ const countArea = (area: string) => entries.filter((entry) => entry.data.areas.i
 		cursor: pointer;
 	}
 	.filter span {
-		color: var(--sl-color-gray-3);
+		color: var(--card-muted);
 	}
 	.filter[aria-pressed='true'] {
 		background: var(--sl-color-accent-low);
@@ -250,7 +250,7 @@ const countArea = (area: string) => entries.filter((entry) => entry.data.areas.i
 	.filter-status {
 		margin: 0;
 		font-size: var(--sl-text-xs);
-		color: var(--sl-color-gray-3);
+		color: var(--card-muted);
 		min-height: 1.2em;
 	}
 	.changelog-month {
@@ -341,7 +341,7 @@ const countArea = (area: string) => entries.filter((entry) => entry.data.areas.i
 		border-radius: 6px;
 	}
 	.change-eye {
-		color: var(--sl-color-gray-3);
+		color: var(--card-muted);
 	}
 	.change:hover .change-eye,
 	.change:has(.change-toggle[aria-expanded='true']) .change-eye {
