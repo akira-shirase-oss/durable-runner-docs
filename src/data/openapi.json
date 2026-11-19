@@ -1,0 +1,390 @@
+{
+	"openapi": "3.1.0",
+	"info": {
+		"title": "Durable Runner API",
+		"version": "0.1.0",
+		"description": "The HTTP API of Durable Runner, the open-source durable workflow runner: submit a job of named steps, watch it run, cancel it, and operate the server.\n\n**This document is a draft**, authored in the docs repository from the server's real request and response shapes and kept in sync with its route table by CI. It moves into durable-runner once reviewed; this endpoint then serves that copy.\n\n**Authentication.** Routes that read state accept the API key or the read-only key; routes that change state accept the API key only. Send the key as `Authorization: Bearer <key>`; the read-only key gets `403` on any mutating route, and `401` is a missing or wrong key. When the server is started with `--open-reads`, the read routes (`GET /jobs`, `GET /jobs/{id}`) are open — on loopback only.\n\n**Errors.** Every failure is `{\"error\": \"<a safe message>\", \"code\": \"<a stable code>\"}` — the code is what a program matches on; the message is for a person.",
+		"contact": { "url": "https://github.com/akira-shirase-oss/durable-runner" },
+		"license": { "name": "MIT", "url": "https://github.com/akira-shirase-oss/durable-runner/blob/main/LICENSE" }
+	},
+	"servers": [{ "url": "https://runner.example.com", "description": "A Durable Runner server (the example domain — the reference substitutes yours)" }],
+	"tags": [
+		{ "name": "jobs", "description": "Submitting, listing, inspecting and cancelling runs." },
+		{ "name": "admin", "description": "Journal compaction, backups and diagnostics." },
+		{ "name": "meta", "description": "Liveness and readiness, always open." }
+	],
+	"paths": {
+		"/health": {
+			"get": {
+				"operationId": "health",
+				"summary": "Liveness",
+				"description": "Always open — no key. Answers as long as the process is up; it says nothing about the journal or the engine.",
+				"tags": ["meta"],
+				"security": [],
+				"responses": {
+					"200": {
+						"description": "The process is up.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" }, "example": { "ok": true } } }
+					}
+				}
+			}
+		},
+		"/ready": {
+			"get": {
+				"operationId": "ready",
+				"summary": "Readiness",
+				"description": "Always open — no key. Answers `503` while the engine is stopped (for example during recovery) or when free disk space is under the reserve, so a load balancer can hold traffic until the runner can actually take work.",
+				"tags": ["meta"],
+				"security": [],
+				"responses": {
+					"200": {
+						"description": "The runner can take work.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ready" }, "example": { "ready": true, "code": null } } }
+					},
+					"503": {
+						"description": "The runner cannot take work; `code` says why (`engine_stopped` or `no_space`).",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ready" }, "example": { "ready": false, "code": "no_space" } } }
+					}
+				}
+			}
+		},
+		"/jobs": {
+			"get": {
+				"operationId": "list",
+				"summary": "List runs",
+				"description": "Runs in submission order, oldest first (`order=asc`, the default) or newest first (`order=desc`). Page with `after` (oldest first: only ids greater than it) or `before` (newest first: only ids less than it) — the response's `next_after` or `next_before` is the cursor for the next page; a null cursor is the end. With `--open-reads` this route is open on loopback.",
+				"tags": ["jobs"],
+				"security": [{ "apiKey": [] }, { "readKey": [] }],
+				"parameters": [
+					{ "name": "order", "in": "query", "description": "`asc` (oldest first, the default) or `desc` (newest first).", "schema": { "type": "string", "enum": ["asc", "desc"], "default": "asc" } },
+					{ "name": "after", "in": "query", "description": "Oldest-first paging: only runs with an id greater than this (a `next_after` from a previous page).", "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+					{ "name": "before", "in": "query", "description": "Newest-first paging: only runs with an id less than this (a `next_before` from a previous page).", "schema": { "type": "integer", "format": "int64", "minimum": 0 } },
+					{ "name": "limit", "in": "query", "description": "At most this many runs, 1–1000; the default is 100.", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 100 } }
+				],
+				"responses": {
+					"200": {
+						"description": "A page of runs.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunList" } } }
+					},
+					"400": { "$ref": "#/components/responses/BadQuery" },
+					"401": { "$ref": "#/components/responses/Unauthorized" }
+				}
+			},
+			"post": {
+				"operationId": "submit",
+				"summary": "Submit a job",
+				"description": "Queues a run: the spec's steps run in order, each calling its registered handler. The response commits to the journal before it is sent — an acknowledged `run_id` survives a restart.\n\n**Idempotency.** `op_key` is the deduplication key: resubmitting the same key returns the first run, even if the spec differs. Keep it stable across retries; a timed-out or `503` submit is safe to retry with the same key.\n\nThe whole body is capped at 256 KiB; `input_b64` decodes to at most 64 KiB; a spec is at most 64 steps; every step's handler must be registered with `--handler name=URL` at server start.",
+				"tags": ["jobs"],
+				"security": [{ "apiKey": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/SubmitRequest" },
+							"example": {
+								"op_key": "reports:daily:2026-11-17",
+								"spec": {
+									"version": 1,
+									"steps": [{ "name": "render", "handler": "reports" }],
+									"input_b64": "eyJkYXkiOiAiMjAyNi0xMS0xNyJ9"
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "The run is committed. If `op_key` was already submitted, this is the first run's id — the new spec is discarded.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/SubmitResponse" }, "example": { "run_id": 41 } } }
+					},
+					"400": { "$ref": "#/components/responses/BadInput" },
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"408": { "$ref": "#/components/responses/BodyTimeout" },
+					"409": { "$ref": "#/components/responses/SubmitConflict" },
+					"413": { "$ref": "#/components/responses/BodyTooLarge" },
+					"415": { "$ref": "#/components/responses/BadContentType" },
+					"503": { "$ref": "#/components/responses/Unavailable" }
+				}
+			}
+		},
+		"/jobs/{id}": {
+			"get": {
+				"operationId": "inspect",
+				"summary": "Inspect a run",
+				"description": "One run's current state. `state` is a string: `queued`, `running:step:N:attempt:M`, `retry_waiting:step:N:attempt:M`, `reconciling:step:N`, `done`, `failed:step:N`, or `cancelled`. Terminal states carry `finished_at` in epoch milliseconds, `null` otherwise. With `--open-reads` this route is open on loopback.",
+				"tags": ["jobs"],
+				"security": [{ "apiKey": [] }, { "readKey": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/RunId" }],
+				"responses": {
+					"200": {
+						"description": "The run.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunSummary" }, "example": { "id": 41, "key": "reports:daily:2026-11-17", "state": "done", "steps": 1, "finished_at": 1774800000123 } } }
+					},
+					"400": { "$ref": "#/components/responses/BadPath" },
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"404": { "$ref": "#/components/responses/NotFound" }
+				}
+			}
+		},
+		"/jobs/{id}/spec": {
+			"get": {
+				"operationId": "spec",
+				"summary": "A run's submitted spec",
+				"description": "The spec exactly as it was submitted — version, steps, and the base64 input — so a run can be resubmitted or audited. The input may carry job content, so this route accepts the API key only: the read-only key cannot see it.",
+				"tags": ["jobs"],
+				"security": [{ "apiKey": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/RunId" }],
+				"responses": {
+					"200": {
+						"description": "The run and its original spec.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/RunSpec" } } }
+					},
+					"400": { "$ref": "#/components/responses/BadPath" },
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" }
+				}
+			}
+		},
+		"/jobs/{id}/cancel": {
+			"post": {
+				"operationId": "cancel",
+				"summary": "Cancel a run",
+				"description": "Asks for the run to stop. Cancellation is committed to the journal, then the engine applies it: a queued run never dispatches; a running step finishes its current attempt and the run ends `cancelled`. A call already made to a handler is not undone — cancellation cannot retract a remote action. Cancelling a finished run is a `409`.",
+				"tags": ["jobs"],
+				"security": [{ "apiKey": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/RunId" }],
+				"responses": {
+					"200": {
+						"description": "The cancellation is committed; `cancelled` is the run's id.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/CancelResponse" }, "example": { "cancelled": 41 } } }
+					},
+					"400": { "$ref": "#/components/responses/BadPath" },
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"409": { "$ref": "#/components/responses/Refused" },
+					"503": { "$ref": "#/components/responses/Unavailable" }
+				}
+			}
+		},
+		"/admin/compact": {
+			"post": {
+				"operationId": "compact",
+				"summary": "Compact the journal",
+				"description": "Folds committed history into a new snapshot generation and drops the records it supersedes, so the journal stays bounded. Only one compaction runs at a time (`409 compaction_running`); a deduplication record leaves seven days after its run finished, not before.",
+				"tags": ["admin"],
+				"security": [{ "apiKey": [] }],
+				"responses": {
+					"200": {
+						"description": "The compaction committed; `generation` is the new snapshot generation.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/CompactResponse" }, "example": { "generation": 3 } } }
+					},
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"409": { "$ref": "#/components/responses/Refused" },
+					"503": { "$ref": "#/components/responses/Unavailable" }
+				}
+			}
+		},
+		"/admin/backup": {
+			"post": {
+				"operationId": "backup",
+				"summary": "Create a backup",
+				"description": "Writes a consistent, checksummed copy of the journal to `<backup-root>/<name>`, safe to copy elsewhere while the server runs. The name is 1–64 characters of `[A-Za-z0-9._-]`, not starting with `.` — never a path. A name that exists is `409 backup_exists`. Requires `--backup-root` at server start, else `403 backups_disabled`. Restore with `durable restore --from <backup> --to <journal>` against a stopped server.",
+				"tags": ["admin"],
+				"security": [{ "apiKey": [] }],
+				"requestBody": {
+					"required": true,
+					"content": { "application/json": { "schema": { "$ref": "#/components/schemas/BackupRequest" }, "example": { "name": "nightly-2026-11-17" } } }
+				},
+				"responses": {
+					"200": {
+						"description": "The backup is complete; `backup` echoes its name under the server's `--backup-root`.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/BackupResponse" } } }
+					},
+					"400": { "$ref": "#/components/responses/InvalidBackupName" },
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/BackupsDisabled" },
+					"409": { "$ref": "#/components/responses/Refused" },
+					"503": { "$ref": "#/components/responses/Unavailable" }
+				}
+			}
+		},
+		"/admin/diagnostics": {
+			"get": {
+				"operationId": "diagnostics",
+				"summary": "Server diagnostics",
+				"description": "A bounded snapshot of the server's internals: journal generation and size, live and active runs, per-state counts, group-commit batch metrics, error counts, and whether free space is above the reserve. Everything in it is aggregated — it never carries job input or a key.",
+				"tags": ["admin"],
+				"security": [{ "apiKey": [] }],
+				"responses": {
+					"200": {
+						"description": "The diagnostics snapshot.",
+						"content": { "application/json": { "schema": { "$ref": "#/components/schemas/Diagnostics" } } }
+					},
+					"401": { "$ref": "#/components/responses/Unauthorized" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"503": { "$ref": "#/components/responses/Unavailable" }
+				}
+			}
+		}
+	},
+	"components": {
+		"securitySchemes": {
+			"apiKey": {
+				"type": "http",
+				"scheme": "bearer",
+				"description": "The server's API key (`DURABLE_API_KEY` at startup). Read and write."
+			},
+			"readKey": {
+				"type": "http",
+				"scheme": "bearer",
+				"description": "The read-only key (`DURABLE_READ_KEY`). Lists and inspects runs; `403` on anything that mutates, and on `GET /jobs/{id}/spec`."
+			}
+		},
+		"parameters": {
+			"RunId": { "name": "id", "in": "path", "required": true, "description": "The run id from a submit or list.", "schema": { "type": "integer", "format": "int64", "minimum": 0 } }
+		},
+		"schemas": {
+			"Health": {
+				"type": "object",
+				"required": ["ok"],
+				"properties": { "ok": { "type": "boolean", "enum": [true] } }
+			},
+			"Ready": {
+				"type": "object",
+				"required": ["ready", "code"],
+				"properties": {
+					"ready": { "type": "boolean", "description": "Whether the runner can take work." },
+					"code": { "type": ["string", "null"], "enum": ["engine_stopped", "no_space", null], "description": "Why it can't, when `ready` is false." }
+				}
+			},
+			"Step": {
+				"type": "object",
+				"required": ["name", "handler"],
+				"properties": {
+					"name": { "type": "string", "maxLength": 128, "description": "What the step is called in this job." },
+					"handler": { "type": "string", "maxLength": 128, "description": "Which registered handler the step calls — a name given to the server with `--handler name=URL`." }
+				}
+			},
+			"JobSpec": {
+				"type": "object",
+				"required": ["version", "steps", "input_b64"],
+				"properties": {
+					"version": { "type": "integer", "enum": [1], "description": "The spec version; 1 is the only version." },
+					"steps": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "$ref": "#/components/schemas/Step" } },
+					"input_b64": { "type": "string", "contentEncoding": "base64", "description": "The job's input, base64; at most 64 KiB once decoded." }
+				}
+			},
+			"SubmitRequest": {
+				"type": "object",
+				"required": ["op_key", "spec"],
+				"properties": {
+					"op_key": { "type": "string", "minLength": 1, "maxLength": 256, "description": "The operation key: deduplicates retries. One key maps to its first run even if a later spec differs. No control characters." },
+					"spec": { "$ref": "#/components/schemas/JobSpec" },
+					"not_before": { "type": "integer", "format": "int64", "minimum": 0, "description": "Epoch milliseconds; the run waits queued until then. Omit to run immediately." }
+				}
+			},
+			"SubmitResponse": {
+				"type": "object",
+				"required": ["run_id"],
+				"properties": { "run_id": { "type": "integer", "format": "int64", "description": "The committed run's id." } }
+			},
+			"RunSummary": {
+				"type": "object",
+				"required": ["id", "key", "state", "steps", "finished_at"],
+				"properties": {
+					"id": { "type": "integer", "format": "int64" },
+					"key": { "type": "string", "description": "The `op_key` the run was submitted with." },
+					"state": { "type": "string", "description": "`queued`, `running:step:N:attempt:M`, `retry_waiting:step:N:attempt:M`, `reconciling:step:N`, `done`, `failed:step:N` or `cancelled`." },
+					"steps": { "type": "integer", "minimum": 1, "description": "How many steps the spec has." },
+					"finished_at": { "type": ["integer", "null"], "format": "int64", "description": "Epoch milliseconds when the run reached a terminal state; null while it is live." }
+				}
+			},
+			"RunList": {
+				"type": "object",
+				"required": ["runs"],
+				"properties": {
+					"runs": { "type": "array", "items": { "$ref": "#/components/schemas/RunSummary" } },
+					"next_after": { "type": ["integer", "null"], "format": "int64", "description": "Present on `order=asc` pages: pass as `after` for the next page; null at the end." },
+					"next_before": { "type": ["integer", "null"], "format": "int64", "description": "Present on `order=desc` pages: pass as `before` for the next page; null at the end." }
+				}
+			},
+			"RunSpec": {
+				"type": "object",
+				"required": ["id", "key", "spec"],
+				"properties": {
+					"id": { "type": "integer", "format": "int64" },
+					"key": { "type": "string" },
+					"spec": { "$ref": "#/components/schemas/JobSpec" }
+				}
+			},
+			"CancelResponse": {
+				"type": "object",
+				"required": ["cancelled"],
+				"properties": { "cancelled": { "type": "integer", "format": "int64", "description": "The id of the run whose cancellation committed." } }
+			},
+			"CompactResponse": {
+				"type": "object",
+				"required": ["generation"],
+				"properties": { "generation": { "type": "integer", "format": "int64", "description": "The snapshot generation the compaction wrote." } }
+			},
+			"BackupRequest": {
+				"type": "object",
+				"required": ["name"],
+				"properties": { "name": { "type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$", "description": "The backup's directory name under `--backup-root`: 1–64 of `[A-Za-z0-9._-]`, not starting with `.` — never a path." } }
+			},
+			"BackupResponse": {
+				"type": "object",
+				"required": ["backup"],
+				"properties": { "backup": { "type": "string", "description": "The backup's name, echoed back." } }
+			},
+			"Diagnostics": {
+				"type": "object",
+				"description": "The server's bounded self-report. Exact fields evolve with the server; the stable ones are listed.",
+				"properties": {
+					"generation": { "type": "integer", "format": "int64", "description": "Current snapshot generation." },
+					"records_written": { "type": "integer", "format": "int64", "description": "Journal records written since the process started." },
+					"live_runs": { "type": "integer", "description": "Runs not yet in a terminal state." },
+					"active_runs": { "type": "integer", "description": "Runs the engine is executing right now." },
+					"index_bytes": { "type": "integer", "description": "Size of the in-memory run index." },
+					"dedup_keys": { "type": "integer", "description": "Operation keys held for deduplication." },
+					"states": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "Runs by state string." },
+					"errors": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "Failures by kind since startup." },
+					"journal_batches": { "type": "integer", "format": "int64", "description": "Group commits performed." },
+					"largest_batch": { "type": "integer", "description": "Records in the largest group commit." },
+					"largest_batch_bytes": { "type": "integer", "description": "Bytes in the largest group commit." },
+					"stale_generations": { "type": "integer", "description": "Superseded snapshot generations still on disk." },
+					"discarded_tail_bytes": { "type": "integer", "format": "int64", "description": "Bytes of incomplete tail discarded at last recovery." },
+					"space_ok": { "type": "boolean", "description": "Free disk space is above the reserve." }
+				}
+			},
+			"Error": {
+				"type": "object",
+				"required": ["error", "code"],
+				"properties": {
+					"error": { "type": "string", "description": "A safe message for a person; never a key, a path or job content." },
+					"code": { "type": "string", "description": "The stable code a program matches on.", "enum": ["bad_query", "bad_path", "bad_input", "bad_content_type", "body_timeout", "body_too_large", "unauthorized", "forbidden", "backups_disabled", "invalid_backup_name", "not_found", "refused", "over_limits", "unregistered_handler", "compaction_running", "snapshot_over_budget", "backup_exists", "busy", "at_capacity", "no_space", "unavailable", "journal_unavailable", "engine_stopped", "timeout", "internal"] }
+				}
+			}
+		},
+		"responses": {
+			"BadQuery": { "description": "A query parameter didn't parse (`code: bad_query`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "invalid value for `limit`", "code": "bad_query" } } } },
+			"BadPath": { "description": "The run id didn't parse (`code: bad_path`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "invalid run id", "code": "bad_path" } } } },
+			"BadInput": { "description": "The body wasn't the submit shape, or `input_b64` isn't base64 (`code: bad_input`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "missing field `spec`", "code": "bad_input" } } } },
+			"BadContentType": { "description": "The body wasn't sent as JSON (`code: bad_content_type`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "expected `application/json`", "code": "bad_content_type" } } } },
+			"BodyTimeout": { "description": "The body took too long to send (`code: body_timeout`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "request body timed out", "code": "body_timeout" } } } },
+			"BodyTooLarge": { "description": "The body exceeded the 256 KiB request cap (`code: body_too_large`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "request body too large", "code": "body_too_large" } } } },
+			"Unauthorized": { "description": "No key, or a wrong key (`code: unauthorized`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "missing or invalid credentials", "code": "unauthorized" } } } },
+			"Forbidden": { "description": "The read-only key was offered a mutating route or `/jobs/{id}/spec` (`code: forbidden`; `backups_disabled` when the server has no `--backup-dir`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "the read key cannot submit", "code": "forbidden" } } } },
+			"BackupsDisabled": { "description": "The server was started without `--backup-dir` (`code: backups_disabled`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "backups are disabled; start the server with --backup-dir", "code": "backups_disabled" } } } },
+			"InvalidBackupName": { "description": "The backup name isn't a plain filename component (`code: invalid_backup_name`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "backup names may not contain path separators", "code": "invalid_backup_name" } } } },
+			"NotFound": { "description": "No run has this id (`code: not_found`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "no such run", "code": "not_found" } } } },
+			"Refused": { "description": "The run or the server refused the transition (`code: refused`, `compaction_running`, `snapshot_over_budget` or `backup_exists`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "a compaction is already running; wait for it to finish", "code": "compaction_running" } } } },
+			"SubmitConflict": { "description": "The spec is over its limits (`code: over_limits`), names an unregistered handler (`unregistered_handler`), or the transition is refused (`refused`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "job spec over limits (op_key 1-256 bytes without control characters, names 1-128 bytes, input 64 KiB, at most 64 steps)", "code": "over_limits" } } } },
+			"Unavailable": { "description": "The server cannot answer now (`code: busy`, `at_capacity`, `engine_stopped`, `timeout`, `no_space`, `unavailable` or `journal_unavailable`). Retry later with the same `op_key` — a submit may have committed before the answer was lost.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" }, "example": { "error": "the runner holds as many runs as it is configured to; retry later with the same op_key", "code": "at_capacity" } } } }
+		}
+	}
+}
