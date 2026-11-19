@@ -1,0 +1,51 @@
+---
+title: Introduction
+description: What Durable Runner is, who it is for, and where to start reading.
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Durable Runner is an open-source, self-hosted background-job runner. You submit a versioned job — a
+name for the work plus a list of named steps — and it is acknowledged only after the record is durable
+on disk. A job the server said yes to survives the process dying: one framed append-only journal,
+written by a single writer under an exclusive lock, is the only authority. No database queue, no
+Redis.
+
+Each step calls an **HTTP handler you register and allowlist**, and every attempt is **at-least-once**
+under one idempotency key — so a reply that vanished is reconciled, never repeated blindly. When a run
+finishes, its history expires on a schedule; the deduplication record stays so a resubmitted
+operation key returns the same run.
+
+## Who it is for
+
+- **Developers** submit, inspect, list and cancel runs with the `durable` CLI or plain `curl` against
+  the HTTP API, and write step handlers in any language — a handler is just an endpoint that takes a
+  POST and honours an idempotency key.
+- **Operators** run one Rust binary next to a filesystem: backups are consistent and verified,
+  restores are checked before a byte is trusted, compaction keeps history bounded, and every queue,
+  payload, retry and connection has a limit the server admits to instead of queueing silently.
+
+## How the pieces fit
+
+| Piece | What it is | Who uses it |
+|---|---|---|
+| `durable-server` | The coordinator: the HTTP API, the engine and the one journal writer | Your deploy |
+| HTTP API | `POST /jobs`, `GET /jobs/{id}`, cancel, compact, backup, diagnostics | The CLI, your scripts, the inspector |
+| `durable` CLI | Submit, inspect, list, cancel, compact, backup and restore from a shell | Developers, operators |
+| Step handlers | Your own HTTP endpoints, allowlisted at startup | The work itself |
+| Inspector | A small read-mostly UI served by the server at `/inspector/` | Operators |
+
+:::note[Status]
+Durable Runner is pre-release. Every page here describes what is on the `main` branch of
+[durable-runner](https://github.com/akira-shirase-oss/durable-runner) today, and every example runs
+against it in this site's CI. There are no release binaries yet — the quick start builds from a
+clone — and none of crates.io, npm or a container registry carries it. The
+[changelog](/changelog/) lists what has shipped, newest first.
+:::
+
+## Start here
+
+<CardGrid>
+	<LinkCard title="API reference" href="/api/reference/" description="Every route of the HTTP API, generated from the OpenAPI document, with try-it." />
+	<LinkCard title="Changelog" href="/changelog/" description="What changed and when, newest first." />
+</CardGrid>
