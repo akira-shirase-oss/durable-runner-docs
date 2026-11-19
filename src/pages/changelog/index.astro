@@ -390,7 +390,7 @@ const countArea = (area: string) => entries.filter((entry) => entry.data.areas.i
 	}
 	.chip-type {
 		font-weight: 600;
-		color: var(--sl-color-white);
+		color: var(--sl-color-text);
 	}
 	/* Security and breaking changes: a quiet tint beside their icon and their name. */
 	.change-security,
@@ -398,10 +398,13 @@ const countArea = (area: string) => entries.filter((entry) => entry.data.areas.i
 		background: linear-gradient(0deg, var(--card-attention), var(--card-attention)), var(--card-bg);
 	}
 	.change-security .change-icon,
-	.change-breaking .change-icon,
+	.change-breaking .change-icon {
+		color: var(--c-warn);
+	}
+	/* Chip text needs ≥4.5:1 on --chip-bg, so it takes the stronger text-weight accent. */
 	.chip-security,
 	.chip-breaking {
-		color: var(--c-warn);
+		color: var(--c-warn-text);
 	}
 	.change-body {
 		padding: 0 1.25rem 1.25rem calc(1.25rem + 20px + 1rem);

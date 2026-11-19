@@ -72,13 +72,15 @@ never a header a stranger sent.
 
 ## Checklist
 
-- [ ] `DURABLE_API_KEY` ≥ 32 chars, generated (`openssl rand -hex 32`), in an env file `0600` — never a flag, never committed.
-- [ ] `DURABLE_READ_KEY` set wherever a read-only credential is enough (Inspector, dashboards).
-- [ ] `--listen` on loopback behind the proxy, or on a private interface only — never a public bind without a proxy plan.
-- [ ] `--open-reads` **off** on anything proxied or shared.
-- [ ] `--trusted-proxy` listing exactly your proxy ranges *(next release)* — a wide range lets a caller claim any client address.
-- [ ] Per-client rate and connection limits on *(next release)* behind anything untrusted.
-- [ ] Handler ports reachable only from the runner host.
-- [ ] Journal and `--backup-root` on local disk, `0700`, service-user owned.
-- [ ] `/ready` driving the load balancer; `space_ok` and `errors` alerting.
-- [ ] A tested restore — [backups](/self-hosting/backups/) is the drill.
+<ul class="dr-checklist">
+<li><code>DURABLE_API_KEY</code> ≥ 32 chars, generated (<code>openssl rand -hex 32</code>), in an env file <code>0600</code> — never a flag, never committed.</li>
+<li><code>DURABLE_READ_KEY</code> set wherever a read-only credential is enough (Inspector, dashboards).</li>
+<li><code>--listen</code> on loopback behind the proxy, or on a private interface only — never a public bind without a proxy plan.</li>
+<li><code>--open-reads</code> <strong>off</strong> on anything proxied or shared.</li>
+<li><code>--trusted-proxy</code> listing exactly your proxy ranges — a wide range lets a caller claim any client address.</li>
+<li>Per-client rate and connection limits on behind anything untrusted.</li>
+<li>Handler ports reachable only from the runner host.</li>
+<li>Journal and <code>--backup-root</code> on local disk, <code>0700</code>, service-user owned.</li>
+<li><code>/ready</code> driving the load balancer; <code>space_ok</code> and <code>errors</code> alerting.</li>
+<li>A tested restore — <a href="/self-hosting/backups/">backups</a> is the drill.</li>
+</ul>

@@ -9,7 +9,7 @@ security boundary. This page runs a handler on `127.0.0.1:58320` and shows exact
 
 ## The contract
 
-| | What the runner does | What the handler must do |
+| When | What the runner does | What the handler must do |
 |---|---|---|
 | **Call** | `POST` to the registered URL, body `{"input": <bytes>, "idem_key": "<op_key>/<step_index>"}`, deadline 20 s by default (`--step-timeout-ms`, max 30 s) | Do the work; reply `2xx` with a body ≤ 256 KiB — it becomes the step's checkpoint |
 | **Always sent** | `x-idempotency-key: <op_key>/<step_index>` | Dedupe on it: a second call with the same key returns the first call's stored result instead of repeating the work |

@@ -19,6 +19,25 @@
 	/* Status accents for chips and icons: Starlight's aside hues, not a product colour. */
 	--c-live: var(--sl-color-green, #3a7d5d);
 	--c-warn: var(--sl-color-orange, #b7791f);
+	/* Text-weight variants of the accents: the icon hues only reach ~3:1 on a card, so anything
+	 * that carries meaning as text uses a stronger mix that holds ≥4.5:1 on --chip-bg. */
+	--c-warn-text: color-mix(in srgb, var(--c-warn) 55%, var(--sl-color-text));
+}
+:root[data-theme='light'] {
+	--c-warn-text: color-mix(in srgb, var(--c-warn) 45%, var(--sl-color-black));
+}
+
+/* Visually hidden but announced — for headings and table cells that need a name, not ink. */
+.visually-hidden {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }
 
 body {
@@ -126,6 +145,22 @@ nav.sidebar a[aria-current='page'] {
 }
 .sl-markdown-content details[open] > summary {
 	margin-bottom: 0.75rem;
+}
+
+/* A read-only checklist: real form controls would need labels, so the box is a drawn glyph. */
+.dr-checklist {
+	list-style: none;
+	padding-left: 0.25rem;
+}
+.dr-checklist li {
+	position: relative;
+	padding-left: 1.75rem;
+}
+.dr-checklist li::before {
+	content: '☐';
+	position: absolute;
+	left: 0.25rem;
+	color: var(--sl-color-gray-3);
 }
 
 /* Status chips used in tables: Built / Planned */
