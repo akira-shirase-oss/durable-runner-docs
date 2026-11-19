@@ -9,6 +9,9 @@ step handlers, the HTTP API and its keys, the CLI, self-hosting, the API referen
 Built with [Astro Starlight](https://starlight.astro.build): static pages, Pagefind search, and almost
 no JavaScript. The API reference is [Scalar](https://github.com/scalar/scalar), served from this site.
 
+Version note: Astro is pinned at 7.4.13, a patch release above the sibling docs site's — chosen
+deliberately to clear a security advisory in the Astro line we share (GHSA-r3h5-4585-7x3w).
+
 ## How it stays true
 
 Documentation that drifts from the code is worse than none, so CI checks the docs against Durable
