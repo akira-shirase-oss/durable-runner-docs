@@ -1,0 +1,51 @@
+---
+title: 'Capacity: measured, not assumed'
+description: The live-run bound, what two real machines actually sustained, and the probe you run on your own host before pointing traffic at it.
+---
+
+A submit is acknowledged after the journal commit; the run then executes at machine speed. So the
+number that matters is the **completion rate**, not the accept rate — and when the offered rate
+outruns it long enough, the backlog hits the bound and admission refuses honestly rather than
+queueing silently:
+
+- `--max-live-runs` (default 100,000) — non-terminal runs admitted at once; past it, submits are
+  `503 at_capacity`.
+- `--max-index-bytes` (default ~512 MiB) — approximate bytes of retained runs; same refusal.
+
+A `503 {"code":"at_capacity"}` means *the machine's ceiling was crossed*, not that work was lost —
+retry after the backlog drains, and the submit's `op_key` dedupes whichever attempt actually
+landed.
+
+## What two machines measured
+
+Sustained runs, per-record fsync via group commit — development observations, not guarantees:
+
+| machine | result |
+|---|---|
+| 12-core laptop (M2 Pro) | **100 submits/s sustained** — 1,000,000/1,000,000 accepted and done, p99 41 ms |
+| 4-core hosted CI runner | **~85 completions/s** — a 100/s offer had 835,397 accepted and done, then refused 161,535 honestly as `503 at_capacity` at the live-run bound; p99 hit the 10 s reply deadline. Zero 429s — the rate limiter wasn't the bound; the machine was |
+
+The CI run is kept as evidence, not rerun until green: it shows exactly how an over-offered server
+behaves — it keeps completing at its own ~85/s and refuses the overflow by name. Ceilings move
+with disk latency (fsync) more than with cores, which is why a 2-vCPU cloud host lands below the
+laptop.
+
+## Measure your own host
+
+Do not plan from this table — plan from a probe on the machine that will actually serve. The
+product ships a load harness (`perf/load.mjs`, needs Node.js) that spawns its own server and
+handler on ports you name against a scratch journal — it does not touch a running unit's state,
+though it shares the machine, so run it before real traffic:
+
+```sh not-run="run it on your host — the point is measuring your machine, and a sustained probe takes minutes"
+cd /path/to/durable-runner   # its target/release/durable-server is what gets measured
+node perf/load.mjs sustained --rate=50 --total=30000 --port=58399 --hport=58398
+```
+
+Watch the done-rate and p99 in the result, then repeat a rung above or below to bracket the
+ceiling. If the refused share is nonzero, the offered rate was above the machine — not above the
+product's bounds. Record the sustained completions/s; that number, with headroom, is your offered
+rate.
+
+Restart cost is the other capacity question — how long an upgrade's replay takes grows with
+queued runs, and [deployment](/self-hosting/deployment/) carries the measured table.

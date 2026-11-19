@@ -87,6 +87,7 @@ export default defineConfig({
 						{ label: 'Configuration', slug: 'self-hosting/configuration' },
 						{ label: 'Deployment', slug: 'self-hosting/deployment' },
 						{ label: 'Backups and restore', slug: 'self-hosting/backups' },
+						{ label: 'Capacity', slug: 'self-hosting/capacity' },
 						{ label: 'Monitoring and operations', slug: 'self-hosting/monitoring' },
 						{ label: 'Security', slug: 'self-hosting/security' },
 					],
