@@ -102,7 +102,24 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForTimeout(600);
 
 // Scalar renders the spec; pick the stored server and fire a request at a path the page offers.
-const storedShown = await page.locator(`text=${yourServer}`).count();
+// The server selector mounts inside an operation's request area — it is offered once an operation
+// is open, not in the first paint — so open one before looking (that is the design: a stored URL
+// appears nowhere a reader didn't ask for it).
+const opLink = page.locator('#reference a[href*="#"]').first();
+if (await opLink.count()) {
+	await opLink.click().catch(() => {});
+	await page.waitForTimeout(800);
+}
+let storedShown = await page.locator(`text=${yourServer}`).count();
+if (storedShown === 0) {
+	// The server dropdown itself lists it too — open any combobox the client rendered.
+	const picker = page.locator('#reference [role="combobox"], #reference button').first();
+	if (await picker.count()) {
+		await picker.click().catch(() => {});
+		await page.waitForTimeout(400);
+	}
+	storedShown = await page.locator(`text=${yourServer}`).count();
+}
 if (storedShown === 0) console.error('privacy: the stored "your Durable Runner" URL was not offered in the reference');
 
 // Read both storage areas whole: the reader's server URL may be remembered (that is the feature), the key never.
