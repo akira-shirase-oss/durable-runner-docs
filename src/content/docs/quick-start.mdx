@@ -1,0 +1,184 @@
+---
+title: Quick start
+description: Build durable-server and durable-cli from source, run them with a step handler on this machine, and run your first durable job end to end.
+---
+
+This page runs on this machine — it builds Durable Runner from source and runs it on
+`127.0.0.1`, where every example is real. By the end you will have submitted a job through the CLI
+and the HTTP API, watched it reach `done`, and seen why the same `op_key` gives the same run.
+
+**Durable Runner has no release binaries yet** — you build from source today; binaries ship with
+v1. You need a Rust toolchain (the repository pins one in `rust-toolchain.toml`, and rustup uses it
+automatically), `python3` for the example handler, and `curl`.
+
+## 1. Get the source and build
+
+```sh run=quickstart step=install
+test -d durable-runner || git clone https://github.com/akira-shirase-oss/durable-runner.git
+cd durable-runner
+cargo build --release --locked -p durable-server -p durable-cli
+```
+
+The workspace builds more crates than two: `durable-server` is the runner (HTTP API plus the engine
+that executes runs), `durable-cli` is the operator CLI that talks to it. Both binaries land in
+`target/release/`.
+
+## 2. Start a handler and the server
+
+A job's steps call HTTP **handlers** you register at startup — the runner only calls what you
+allowlisted. `examples/pilot/handler.py` is a minimal one: it answers `POST /step`, records the
+idempotency key it was given, and answers the reconciliation probe on `GET /step?idem_key=…`.
+
+```sh run=quickstart step=up
+export DURABLE_API_KEY=$(openssl rand -hex 32)
+export DURABLE_READ_KEY=$(openssl rand -hex 32)
+rm -rf journal backups   # a clean journal for this walkthrough
+python3 examples/pilot/handler.py 58320 >handler.log 2>&1 &
+HND=$!
+./target/release/durable-server --journal journal --listen 127.0.0.1:58300 \
+  --backup-root backups --handler step=http://127.0.0.1:58320/step >server.log 2>&1 &
+SRV=$!
+for i in $(seq 1 150); do curl -sf http://127.0.0.1:58300/health >/dev/null && break; kill -0 $SRV 2>/dev/null || { echo "server died; check server.log"; break; }; sleep 0.1; done
+export PATH="$PWD/target/release:$PATH"
+alias durable="durable-cli --server http://127.0.0.1:58300"
+```
+
+Four things just happened:
+
+- `DURABLE_API_KEY` is the write key — submits, cancels and admin routes need it. Generate a fresh
+  one per environment; the server reads it at startup, so changing it means a restart.
+- `DURABLE_READ_KEY` is the optional read-only key — it may list and inspect runs but is refused
+  anywhere else.
+- `--journal journal` is the directory the runner writes its append-only journal into — the only
+  source of truth it has.
+- `--handler step=URL` registers the name `step` for that handler. A job step names the handler it
+  wants; anything unregistered is refused.
+- The `durable` alias is a convenience for this walkthrough — `durable-cli` with `--server`
+  spelled out. `http://127.0.0.1:58300` is the CLI's own default; it's written explicitly so the
+  address is visible everywhere it matters.
+
+The server answers its open liveness route:
+
+```sh run=quickstart
+curl -s http://127.0.0.1:58300/health
+```
+
+```json output=quickstart
+{"ok":true}
+```
+
+## 3. Submit a job
+
+A job is an `op_key` plus a spec: named steps that run in order, each bound to a registered handler,
+and a small input. The CLI takes care of the base64:
+
+```sh run=quickstart
+durable submit --op-key demo/first-job --step greet=step --input '{"name":"ada"}'
+```
+
+```json output=quickstart
+{"run_id":1}
+```
+
+`run_id 1` came back only after the submit was committed to the journal — acknowledged work
+survives a restart. The `op_key` is the deduplication key: submit the same key again and you get the
+first run back, not a new one — even if the spec differs:
+
+```sh run=quickstart
+durable submit --op-key demo/first-job --step other=step --input 'different input, same key'
+```
+
+```json output=quickstart
+{"run_id":1}
+```
+
+That is what makes retries safe: a timeout, a `503`, a lost connection — retry with the same
+`op_key` and you cannot create the work twice.
+
+## 4. Watch it finish
+
+The engine dispatches the step to the handler, journals the outcome, and the run reaches a terminal
+state. Poll until it lands:
+
+```sh run=quickstart
+for i in $(seq 1 40); do s=$(durable inspect --run 1); case "$s" in *'"done"'*) break;; esac; sleep 0.25; done; echo "$s"
+```
+
+```json output=quickstart
+{"finished_at":1774990000000,"id":1,"key":"demo/first-job","state":"done","steps":1}
+```
+
+`finished_at` is epoch milliseconds; it stays `null` while a run is live.
+
+## 5. The same call over HTTP
+
+Everything the CLI does is an HTTP route — here is the raw API, key first (a read without one is a
+`401`):
+
+```sh run=quickstart
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" http://127.0.0.1:58300/jobs/1
+```
+
+```json output=quickstart
+{"finished_at":1774990000000,"id":1,"key":"demo/first-job","state":"done","steps":1}
+```
+
+And a submit straight over HTTP — the input goes base64 in `input_b64` (`{"name":"dave"}` encodes
+to `eyJuYW1lIjoiZGF2ZSJ9`):
+
+```sh run=quickstart
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"demo/curl-job","spec":{"version":1,"steps":[{"name":"greet","handler":"step"}],"input_b64":"eyJuYW1lIjoiZGF2ZSJ9"}}' \
+  http://127.0.0.1:58300/jobs
+```
+
+```json output=quickstart
+{"run_id":2}
+```
+
+```sh run=quickstart
+for i in $(seq 1 40); do s=$(durable inspect --run 2); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done; \
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" "http://127.0.0.1:58300/jobs?order=desc&limit=10"
+```
+
+```json output=quickstart
+{
+  "next_before": null,
+  "runs": [
+    {
+      "finished_at": 1795046964425,
+      "id": 2,
+      "key": "demo/curl-job",
+      "state": "done",
+      "steps": 1
+    },
+    {
+      "finished_at": 1795046964126,
+      "id": 1,
+      "key": "demo/first-job",
+      "state": "done",
+      "steps": 1
+    }
+  ]
+}
+```
+
+## 6. Stop it
+
+The quick-start server and handler are still running in this shell (their PIDs are in `$SRV` and
+`$HND`). Stop them when you are done — the server drains its in-flight work on the way down:
+
+```sh run=quickstart step=stop
+kill $SRV $HND 2>/dev/null || true
+```
+
+The `journal` directory keeps the history — start `durable-server` against it again and every
+acknowledged run is still there, which is the whole point.
+
+## Where next
+
+- [Concepts](/concepts/) — the journal, at-least-once and recovery, in one read.
+- [Jobs](/jobs/) — the full lifecycle: states, pagination, spec read-back, cancel, scheduling.
+- [Handlers](/handlers/) — the contract your step endpoints implement.
+- [CLI](/cli/) — every subcommand.
+- [API reference](/api/reference/) — every route, generated from the OpenAPI draft.

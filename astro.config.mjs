@@ -58,7 +58,38 @@ export default defineConfig({
 			sidebar: [
 				{
 					label: 'Getting started',
-					items: [{ label: 'Introduction', slug: 'index' }],
+					items: [
+						{ label: 'Introduction', slug: 'index' },
+						{ label: 'Quick start', slug: 'quick-start' },
+						{ label: 'Concepts', slug: 'concepts' },
+					],
+				},
+				{
+					label: 'Using the runner',
+					items: [
+						{ label: 'Jobs', slug: 'jobs' },
+						{ label: 'Step handlers', slug: 'handlers' },
+						{ label: 'The CLI', slug: 'cli' },
+						{ label: 'The Inspector', slug: 'inspector' },
+					],
+				},
+				{
+					label: 'HTTP API',
+					items: [
+						{ label: 'At a glance', slug: 'api' },
+						{ label: 'Authentication and keys', slug: 'api/authentication' },
+						{ label: 'Errors', slug: 'errors' },
+					],
+				},
+				{
+					label: 'Self-hosting',
+					items: [
+						{ label: 'Configuration', slug: 'self-hosting/configuration' },
+						{ label: 'Deployment', slug: 'self-hosting/deployment' },
+						{ label: 'Backups and restore', slug: 'self-hosting/backups' },
+						{ label: 'Monitoring and operations', slug: 'self-hosting/monitoring' },
+						{ label: 'Security', slug: 'self-hosting/security' },
+					],
 				},
 				{ label: 'API reference', link: '/api/reference/', attrs: { 'data-reference': '' } },
 				{ label: 'Changelog', link: '/changelog/' },

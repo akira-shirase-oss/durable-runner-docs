@@ -1,0 +1,87 @@
+---
+title: Concepts
+description: The four ideas Durable Runner is built on — the journal is the only authority, commit before action, at-least-once with one idempotency key, and bounds on everything.
+---
+
+Durable Runner does one thing: it takes a job you submitted and keeps it safe enough to finish,
+even if the process, the machine or the network fails in between. Four ideas carry that. Once you
+have them, every route, flag and error on the site is a consequence.
+
+## The journal is the only authority
+
+Everything the runner knows lives in an **append-only journal** on local disk — a directory of
+framed, checksummed records written by one writer. A submit, an attempt's outcome, a cancel, a
+finished run: each is a record. Snapshots and the in-memory index exist to start and answer fast,
+but they are **rebuilt from the journal**, never trusted. If memory and disk disagree, disk wins.
+
+That is why a killed server can restart in place and continue where it left off: it replays the
+journal, discards only a demonstrably incomplete tail (bytes it could not have acknowledged), and
+refuses to start over a corrupt committed record rather than guess. Two processes can never share a
+journal — the second one fails at startup on the journal's lock.
+
+## Commit before action
+
+The order is fixed: **the journal commits first, the runner acts second.** A submit is fsynced to
+the journal before its `{"run_id": N}` answer is sent. A handler is called only after the dispatch
+is journaled. An outcome is journaled before the run's state moves.
+
+Because acknowledgment is post-commit, an acknowledged `run_id` means "this is durable" — never "I
+think I got it." A `503`, a timeout or a dead connection tells you nothing about whether the write
+landed, which is exactly what the `op_key` is for.
+
+## At-least-once, honestly
+
+A step runs **at least once**. Never zero times after acknowledgment — and never claimed to be
+"exactly once" toward the outside world, because no one can promise that across a network.
+
+Three mechanisms make it survivable:
+
+- **One idempotency key per step across all its attempts.** The runner sends
+  `op_key/step_index` as `x-idempotency-key` on every attempt and every probe. Your handler dedupes
+  on it: a second call with the same key returns the first call's result instead of doing the work
+  again.
+- **Reconciliation, not assumptions.** A timeout or a lost reply is *unknown*, not "failed". The
+  engine then asks the handler's probe (`GET …?idem_key=…`): 200 means the call landed, and the run
+  reconciles on that instead of blindly retrying.
+- **Bounded retries.** A step gets 5 attempts with deterministic backoff (base × 2^n capped,
+  plus bounded jitter so replays agree); the last failure ends the run `failed:step:N`.
+
+Cancellation follows the same honesty: it commits to the journal and stops future work — a queued
+run never dispatches — but it cannot unsend a call already made to your handler.
+
+## Bounded everything
+
+Every queue, body, counter and file has a cap, and the runner says so at the boundary instead of
+dying slowly:
+
+| Bound | Limit | When you meet it |
+|---|---|---|
+| Request body | 256 KiB | `413 body_too_large` |
+| Job input (decoded) | 64 KiB | `409 over_limits` |
+| Steps per job | 64 | `409 over_limits` |
+| `op_key`, step and handler names | 256 / 128 / 128 bytes | `409 over_limits` |
+| Attempts per step | 5, capped backoff | run ends `failed:step:N` |
+| Step deadline | 20 s per attempt (`--step-timeout-ms`, ≤ 30 s) | the attempt is *lost* → reconcile or retry |
+| Handler reply | 256 KiB | the attempt fails |
+| Live (non-terminal) runs | 100,000 (`--max-live-runs`) | `503 at_capacity` |
+| In-memory index | ~512 MiB (`--max-index-bytes`) | `503 at_capacity` |
+| Free disk reserve | `--reserve-bytes` | `503 no_space`, `/ready` goes false |
+| Connections | 512 (`--max-connections`) | extras wait in the accept queue |
+
+Refusals are designed to be retried with the **same `op_key`**: whichever limit rejected you, the
+answer is "later", not "wrong".
+
+## Recovery, in one paragraph
+
+On startup the runner opens its journal, verifies the newest snapshot and manifest, replays the
+records after it, and drops only a torn tail — a final frame cut mid-write that was never
+acknowledged. Anything committed and corrupt stops startup instead. Dedup records (`op_key` → run)
+stay for seven days after a run finishes, so late retries still dedupe until compaction reclaims
+them. Backups are consistent, checksummed copies taken while the server runs; restores are verified
+file-by-file and refuse a live journal.
+
+## Where next
+
+- [Quick start](/quick-start/) — see all of this working on your machine.
+- [Jobs](/jobs/) — states, keys and the lifecycle in the API.
+- [Self-hosting](/self-hosting/configuration/) — the flags behind every bound above.
