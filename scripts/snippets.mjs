@@ -76,14 +76,30 @@ const skip = new Set((option('skip', '') || '').split(',').filter(Boolean));
 const only = option('suite', '');
 const workdir = resolve(option('cwd', join(ROOT, '.snippets/work')));
 
+/** The host:port form a flag like --listen takes: no scheme, but the same shown address. */
+const hostPort = (url) => new URL(url).host;
+
 /**
  * A block's code as it runs: the example domain and every shown local address becomes the stack's.
  * Shown-replaced first where a replacement could produce a later search string: the restored
  * address (58301) goes before the handler's (58320→base+2), so a substituted value is never
- * matched twice.
+ * matched twice. After the full URLs, the bare host:port forms go too — `--listen 127.0.0.1:58300`
+ * and `handler.py 58320` are the same shown addresses without their scheme.
  */
 export const runnable = (code, stack = base, handler = handlerBase, restored = restoredBase) =>
-	code.replaceAll(EXAMPLE_BASE, stack).replaceAll(SHOWN_RESTORED, restored).replaceAll(SHOWN_HANDLER, handler).replaceAll(DEFAULT_BASE, stack);
+	code
+		.replaceAll(EXAMPLE_BASE, stack)
+		.replaceAll(SHOWN_RESTORED, restored)
+		.replaceAll(SHOWN_HANDLER, handler)
+		.replaceAll(DEFAULT_BASE, stack)
+		.replaceAll(hostPort(SHOWN_RESTORED), hostPort(restored))
+		.replaceAll(hostPort(SHOWN_HANDLER), hostPort(handler))
+		.replaceAll(hostPort(DEFAULT_BASE), hostPort(stack))
+		// Last, the bare ports — `handler.py 58320` takes a port, not a URL. Whole words only,
+		// and after the host:port pass so `127.0.0.1:58320` isn't turned into `127.0.0.1:<mapped>`.
+		.replace(new RegExp(`\\b${new URL(SHOWN_RESTORED).port}\\b`, 'g'), new URL(restored).port)
+		.replace(new RegExp(`\\b${new URL(SHOWN_HANDLER).port}\\b`, 'g'), new URL(handler).port)
+		.replace(new RegExp(`\\b${new URL(DEFAULT_BASE).port}\\b`, 'g'), new URL(stack).port);
 
 // ---------------------------------------------------------------- reading the pages
 
@@ -245,6 +261,9 @@ function runAll(steps) {
 	const lines = [
 		'set -euo pipefail',
 		'shopt -s expand_aliases',
+		// However the run ends — a failing step, an early stop — the servers and handlers it
+		// started are its own children; reap them so a stopped suite never leaves a stale port.
+		"trap 'kill $(jobs -p) 2>/dev/null || true' EXIT",
 		`cd ${JSON.stringify(workdir)}`,
 		`export BASE=${JSON.stringify(base)}`,
 		`export HANDLER_BASE=${JSON.stringify(handlerBase)}`,
@@ -300,7 +319,10 @@ function runAll(steps) {
 	let ok = true;
 	steps.forEach((step, index) => {
 		if (step.kind !== 'run' || !step.expect) return;
-		const actual = readFileSync(join(dir, `${index}.out`), 'utf8');
+		const outFile = join(dir, `${index}.out`);
+		// A suite that stopped early leaves no .out for the steps it never reached — count them
+		// as differences (the run already failed) instead of crashing on the missing file.
+		const actual = statSync(outFile, { throwIfNoEntry: false }) ? readFileSync(outFile, 'utf8') : '';
 		step.actual = actual;
 		if (!matches(actual, step.expect)) {
 			ok = false;

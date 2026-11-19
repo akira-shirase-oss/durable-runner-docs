@@ -17,6 +17,9 @@ test('local shown addresses become the band under test', () => {
 	const banded = runnable('durable --server http://127.0.0.1:58300 diag', 'http://127.0.0.1:58540', 'http://127.0.0.1:58542', 'http://127.0.0.1:58541');
 	assert.match(banded, /58540/);
 	assert.doesNotMatch(banded, /58300/);
+	// And the scheme-less forms a flag or an argv port takes: --listen host:port, handler.py 58320.
+	const bare = runnable('durable-server --listen 127.0.0.1:58300 && python3 handler.py 58320', 'http://127.0.0.1:58540', 'http://127.0.0.1:58542', 'http://127.0.0.1:58541');
+	assert.equal(bare, 'durable-server --listen 127.0.0.1:58540 && python3 handler.py 58542');
 });
 
 test('a run id, a key and a finish time all normalise', () => {

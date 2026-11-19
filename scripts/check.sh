@@ -8,9 +8,7 @@ node scripts/check-urls.mjs
 node scripts/check-openapi.mjs
 node scripts/snippets.mjs --coverage
 node scripts/copy-scalar.mjs
-npm run build
-node scripts/focusable-tables.mjs
-node scripts/csp-hashes.mjs
+npm run build   # the build itself rewrites tables for focus and the CSP script hashes
 node scripts/check-dist.mjs
 node scripts/check-privacy.mjs
 echo "check: all gates passed"

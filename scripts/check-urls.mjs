@@ -40,7 +40,7 @@ export function problems(text, file) {
 		if (LOCAL.test(url) && !local) bad.push(`${url} is a this-machine address on a page that isn't local`);
 		else if (PRIVATE_V4.test(url)) bad.push(`${url} is a private IPv4 address — use a documentation subnet or an example name`);
 		else if (/^https?:\/\/0\.0\.0\.0/.test(url)) bad.push(`${url}: 0.0.0.0 listens everywhere; it isn't an address to visit`);
-		else if (/(token|key|secret|sig|password)=[A-Za-z0-9]/i.test(url)) bad.push(`${url} looks like it carries a credential`);
+		else if (/[?&](token|key|secret|sig|password)=[A-Za-z0-9]/i.test(url)) bad.push(`${url} looks like it carries a credential`);
 		else if (/^http:\/\/(?!localhost|127\.|0\.0\.0\.0|\[?::1)/.test(url) && !/runner\.example\.com/.test(url)) bad.push(`${url} is plain http`);
 		else if (url.startsWith(`${EXAMPLE}/`) && !/^https:\/\/runner\.example\.com\/(health|ready|jobs|admin|inspector|openapi)/.test(url))
 			bad.push(`${url}: the example domain only pretends to serve API paths, no other pages`);
