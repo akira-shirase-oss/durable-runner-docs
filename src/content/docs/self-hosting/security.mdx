@@ -1,0 +1,55 @@
+---
+title: Security
+description: The honest security model — unsigned handler calls on private networks, two keys, loopback-only open reads, a plaintext journal — and the checklist that follows.
+---
+
+Durable Runner is a single-tenant runner: it trusts its operators completely and its network not
+at all. Everything below is the model as it stands today — including what it deliberately does
+*not* do.
+
+## The trust boundaries
+
+**Handlers live on a private network; their calls are unsigned.** The runner `POST`s to registered
+URLs with no signing, no key, no mTLS — the `--handler` allowlist and your network segmentation are
+the entire boundary. Anything that can reach a handler's URL can invoke it. Keep handlers on
+loopback or a private segment the runner host also sits on; never expose a handler port to
+anything routable.
+
+**Two keys, environment only.** `DURABLE_API_KEY` (write + admin) and `DURABLE_READ_KEY` (reads
+only). Both ≥ 32 chars, read at startup, never accepted on a command line. The whole surface is
+`Authorization: Bearer`; there are no per-user tokens, no sessions, no ACLs beyond read/write.
+
+**`--open-reads` is loopback-only — and never behind a proxy.** It exists for a developer's own
+machine: refused at startup on a non-loopback listen, Host-checked against rebinding. A proxy
+breaks the assumption it's built on — remote requests arrive looking local. With a proxy in front,
+reads take `DURABLE_READ_KEY` and `--open-reads` stays off.
+
+**The Inspector keeps its key in `sessionStorage` only** — nothing is written to `localStorage`, a
+cookie, or the URL, so the key dies with the tab. Give it the **read key**: a `sessionStorage` leak
+then costs read access, not the write side. Never paste `DURABLE_API_KEY` into a browser you don't
+fully control.
+
+**The journal is plaintext.** Submitted inputs and handler replies are stored verbatim — the
+journal, snapshots and backups are all equally sensitive. Filesystem permissions (`0700`/service
+user) and disk encryption are the mitigations; treat `backups/` exactly as sensitively as the
+journal itself.
+
+## What it does not do
+
+- **No TLS of its own.** Terminate at a proxy; keep `--listen` loopback.
+- **No request signing to handlers** — private network or nothing.
+- **No tenant isolation** — one server, one trust domain; the `op_key` namespace is shared.
+- **No exactly-once claims** — at-least-once plus idempotent handlers is the honest ceiling; a
+  handler can't be made safe by the runner alone.
+- **Keys are never logged**, and job payloads never appear in the server's log either.
+
+## Checklist
+
+- [ ] `DURABLE_API_KEY` ≥ 32 chars, generated (`openssl rand -hex 32`), in an env file `0600` — never a flag, never committed.
+- [ ] `DURABLE_READ_KEY` set wherever a read-only credential is enough (Inspector, dashboards).
+- [ ] `--listen` on loopback behind the proxy, or on a private interface only — never a public bind without a proxy plan.
+- [ ] `--open-reads` **off** on anything proxied or shared.
+- [ ] Handler ports reachable only from the runner host.
+- [ ] Journal and `--backup-root` on local disk, `0700`, service-user owned.
+- [ ] `/ready` driving the load balancer; `space_ok` and `errors` alerting.
+- [ ] A tested restore — [backups](/self-hosting/backups/) is the drill.

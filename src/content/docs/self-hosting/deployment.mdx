@@ -1,0 +1,72 @@
+---
+title: Deployment
+description: Where the journal lives, how durable-server sits behind a proxy and systemd, and what a restart costs — the operational shape of one node.
+---
+
+Durable Runner deploys as **one `durable-server` process plus its journal on local disk**. No
+database, no broker, no cluster — the journal's one-writer rule is the architecture. Two processes
+can never share a journal directory: the second fails at startup on its lock, so "high
+availability" means a fast, monitored restart of the same machine, not a second live node.
+
+## Filesystem
+
+- **Local disk only.** The journal fsyncs every commit; a network filesystem (NFS, EBS-through-NFS,
+  FUSE mounts) breaks both its latency and its lock guarantees.
+- **Space:** provision journal + snapshots + `--reserve-bytes` (64 MiB default) + headroom for
+  `--backup-root` if it's co-located. Dedup records live at most seven days past a run's end;
+  compaction (`--compact-every-secs` or `POST /admin/compact`) reclaims them.
+- **Permissions:** the journal holds submitted inputs verbatim — `0700` on the journal directory,
+  owned by the service user.
+
+## systemd
+
+```ini title="durable-server.service" not-run="host configuration — paths and user are yours"
+[Unit]
+Description=Durable Runner
+After=network.target
+
+[Service]
+User=durable
+EnvironmentFile=/etc/durable/env
+ExecStart=/usr/local/bin/durable-server --journal /var/lib/durable/journal \
+  --listen 127.0.0.1:58300 --handler step=http://127.0.0.1:58320/step \
+  --backup-root /var/lib/durable/backups --compact-every-secs 3600
+Restart=always
+RestartSec=1
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/durable/env` carries `DURABLE_API_KEY` and `DURABLE_READ_KEY` (`0600`, service user).
+`SIGTERM` drains: in-flight requests finish, the engine makes its decided work durable, and it
+exits inside `--drain-timeout-secs` (30 s default) — so `systemctl restart` is a clean cut, not a
+crash drill. `Restart=always` plus the journal means a crash resumes in place; on boot, replay
+restores exactly what was acknowledged.
+
+## In front of a proxy
+
+The server speaks plain HTTP — put a TLS-terminating proxy in front when it serves beyond the
+host. Two rules:
+
+1. **The proxy must not flatten the auth surface.** Forward `Authorization` and the real client;
+   Durable Runner's own checks are the boundary, not the proxy's allowlist.
+2. **Never proxy to a server started with `--open-reads`.** That flag's safety is "the request
+   really is local"; a proxy makes remote reads look local. With a proxy, reads need
+   `DURABLE_READ_KEY` like everything else.
+
+```txt title="Caddyfile" not-run="your hostname and TLS policy differ"
+runner.example.com {
+	reverse_proxy 127.0.0.1:58300
+}
+```
+
+Keep `--listen 127.0.0.1:58300` — the proxy is the only thing that should reach the port.
+
+## Upgrades and restarts
+
+A stop-start on the same journal is the upgrade path: stop (drains clean), swap the binary, start.
+The journal is forward-readable by newer servers — the [changelog](/changelog/) calls out any
+release whose journal format needs attention. Restores from backup are the rollback path when a
+journal can't move forward ([backups](/self-hosting/backups/)).

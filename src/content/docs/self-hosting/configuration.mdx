@@ -1,0 +1,71 @@
+---
+title: Configuration
+description: Every durable-server flag, grouped by what it bounds — storage, the engine, the HTTP edge — with the defaults the binary ships.
+---
+
+`durable-server` is configured entirely by flags; there is no config file. `durable-server --help`
+is the same list in the binary. Defaults shown are what the flag carries.
+
+## The required two, and the directory that matters
+
+| Flag | Default | What it sets |
+|---|---|---|
+| `--journal <dir>` | `data/journal` | the append-only journal — the runner's only state. Local disk, one writer ever; see [deployment](/self-hosting/deployment/) |
+| `--listen <addr>` | `127.0.0.1:58300` | bind address. Loopback is the default; bind wider only behind a real key and a proxy plan |
+| `--handler name=URL` | — | repeatable: the allowlist a step may name. Unregistered names are refused at submit (`409 unregistered_handler`) |
+
+Plus the environment: `DURABLE_API_KEY` (required at startup, ≥ 32 chars) and `DURABLE_READ_KEY`
+(optional, ≥ 32 chars, must differ). [Authentication](/api/authentication/) covers what each opens.
+
+## Engine bounds
+
+| Flag | Default | Bound |
+|---|---|---|
+| `--step-timeout-ms` | `20000` | per-attempt deadline on a handler call (the domain caps it at 30 s) |
+| `--reply-timeout-ms` | `10000` | how long an API call waits on the engine before `503 timeout` — a stuck disk must not hang every request |
+| `--max-live-runs` | `100000` | non-terminal runs admitted; past it, submits are `503 at_capacity` |
+| `--max-index-bytes` | ~512 MiB | approximate bytes of retained runs in memory; same refusal. Sized for a 2 GB host |
+| `--max-in-flight` | `32` | handler calls (attempts + probes) concurrently in flight |
+| `--max-dispatch-per-tick` | `64` | dispatches per 50 ms scheduler tick — the first-step dispatch rate is at most ~1280/s |
+
+## HTTP edge
+
+| Flag | Default | Bound |
+|---|---|---|
+| `--max-connections` | `512` | connections served at once; extras wait in the accept queue. Keep below `ulimit -n` minus 64 |
+| `--header-timeout-ms` | `10000` | a request head must arrive within this |
+| `--body-deadline-ms` | `30000` | a request body must finish within this (`408` otherwise) |
+| `--write-stall-ms` | `10000` | a response write that stalls this long drops the connection |
+| `--max-connection-secs` | `600` | a keep-alive connection's maximum age |
+| `--max-requests-per-connection` | `100` | the Nth answer carries `Connection: close` |
+| `--drain-timeout-secs` | `30` | SIGTERM/SIGINT: finish in-flight requests, then let the engine make its decisions durable, before exiting |
+
+## Storage and maintenance
+
+| Flag | Default | Bound |
+|---|---|---|
+| `--reserve-bytes` | `67108864` (64 MiB) | free space that must stay on the journal filesystem; below it submits are `503 no_space`, `/ready` is false, compaction and backup refuse what won't fit |
+| `--backup-root <dir>` | — | enables `POST /admin/backup`; without it, `403 backups_disabled` |
+| `--compact-every-secs` | `0` | automatic compaction period; `0` means only on request (`POST /admin/compact`) |
+| `--max-snapshot-bytes` | `2147483648` (2 GiB) | a compaction whose snapshot would exceed this is refused `409 snapshot_over_budget` |
+
+## The UI and the loophole
+
+| Flag | Default | Bound |
+|---|---|---|
+| `--ui-dir <dir>` | — | serve the built Inspector assets at `/inspector` |
+| `--open-reads` | off | serve `GET /jobs*` without a key — **loopback listen only** (refused at startup otherwise), and never behind a proxy; [authentication](/api/authentication/) explains why |
+
+## A production-shaped start
+
+```sh not-run="deployment detail — paths, unit and proxy live on the deployment page"
+DURABLE_API_KEY="$(openssl rand -hex 32)" \
+DURABLE_READ_KEY="$(openssl rand -hex 32)" \
+durable-server --journal /var/lib/durable/journal --listen 127.0.0.1:58300 \
+  --handler invoices=http://127.0.0.1:58320/invoices \
+  --handler reports=http://127.0.0.1:58321/reports \
+  --backup-root /var/lib/durable/backups --compact-every-secs 3600
+```
+
+The loopback listen is deliberate: TLS terminates at the proxy in front, and the read surface
+still wants the keys. [Security](/self-hosting/security/) is the checklist this start assumes.

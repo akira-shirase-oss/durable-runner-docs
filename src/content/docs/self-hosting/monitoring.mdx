@@ -1,0 +1,86 @@
+---
+title: Monitoring and operations
+description: /health versus /ready, the diagnostics counters worth alerting on, and where the server's own logs carry the rest. Shown against this machine's server.
+---
+
+Two open routes front the whole thing; everything else takes a key. The server below is the one
+[the backups page](/self-hosting/backups/) just restored — same commands, `127.0.0.1:58300`.
+
+## Liveness and readiness
+
+```sh run=ops
+curl -s http://127.0.0.1:58300/health
+```
+
+```json output=ops
+{"ok":true}
+```
+
+`GET /health` means the process answers — point your load balancer's TCP check at it.
+`GET /ready` means it *should take work*: it goes `503` with a reason `code` when free space drops
+under the reserve or the engine has stopped — the signal to pull the node out of rotation without
+killing it:
+
+```sh run=ops
+curl -s -i http://127.0.0.1:58300/ready
+```
+
+```http output=ops
+HTTP/1.1 200 OK
+content-type: application/json
+content-length: 26
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":null,"ready":true}
+```
+
+## Diagnostics: the counters to alert on
+
+`GET /admin/diagnostics` (needs the API key) returns the engine's operational picture:
+
+```sh run=ops
+durable diag
+```
+
+```json output=ops
+{
+  "active_runs": 0,
+  "dedup_keys": 1,
+  "discarded_tail_bytes": 0,
+  "errors": {},
+  "generation": 2,
+  "index_bytes": 230,
+  "journal_batches": 0,
+  "largest_batch": 0,
+  "largest_batch_bytes": 0,
+  "live_runs": 1,
+  "records_written": 0,
+  "space_ok": true,
+  "stale_generations": 0,
+  "states": {
+    "done": 1
+  }
+}
+```
+
+| Field | Watch it for |
+|---|---|
+| `space_ok` | `false` → disk under reserve: the *first* alert, before `no_space` refusals |
+| `live_runs` / `active_runs` | approaching `--max-live-runs` → `at_capacity` refusals start |
+| `index_bytes` | approaching `--max-index-bytes` → same refusal |
+| `states` | a growing `failed:step:*` share means a handler is sick |
+| `errors` | internal error counters, by kind — anything nonzero deserves a look |
+| `journal_batches`, `records_written` | commit volume and batching health |
+| `largest_batch`, `largest_batch_bytes` | one runaway producer shows up here first |
+| `stale_generations` | generations not yet retired — a stuck compaction leaves this nonzero |
+| `discarded_tail_bytes` | bytes dropped as a torn tail at the last restart — nonzero after a hard kill is normal, after a clean stop is not |
+| `generation` | current journal generation; bumps on every compact |
+
+There's no metrics export — `diag` is one line of JSON, so a `cron` + `jq` alert covers it:
+`durable diag | jq 'select(.space_ok == false)'`.
+
+## Logs
+
+`durable-server` writes operational events to stderr — startup resolution, refusals that can't be
+a client's fault (`journal_unavailable`, probe failures), internal errors. Capture it with your
+service manager; payloads and keys never appear in it, by design.

@@ -1,0 +1,110 @@
+---
+title: Backups and restore
+description: POST /admin/backup writes a consistent, checksummed copy while the server runs; durable restore rebuilds a journal from it — offline, verified, lock-checked. Shown on this machine.
+---
+
+{/* snippet ops: snippets/restart.sh */}
+
+Everything here runs against a server on `127.0.0.1:58300` started as in the
+[quick start](/quick-start/), with `--backup-root backups`. First, some state worth saving — a run
+that finishes and compacts:
+
+```sh run=ops
+alias durable="durable-cli --server http://127.0.0.1:58300"
+durable submit --op-key ops/keep-alive --step ping=step --input '{"keep":"me"}'
+```
+
+```json output=ops
+{"run_id":1}
+```
+
+```sh run=ops
+for i in $(seq 1 60); do s=$(durable inspect --run 1); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done; echo "$s"
+```
+
+```json output=ops
+{"finished_at":1774990000000,"id":1,"key":"ops/keep-alive","state":"done","steps":1}
+```
+
+A compaction first, so the backup carries a snapshot generation, not only records:
+
+```sh run=ops
+durable compact
+```
+
+```json output=ops
+{"generation":2}
+```
+
+## Backup: online, consistent, cheap
+
+`POST /admin/backup` (or `durable backup`) writes a snapshot-plus-records copy under
+`--backup-root/<name>` — while the server keeps serving. The copy is internally consistent and
+checksummed, so it's safe to `rsync` elsewhere:
+
+```sh run=ops
+durable backup --name nightly
+```
+
+```json output=ops
+{"backup":"nightly"}
+```
+
+The name is a plain directory name — `1–64` of `[A-Za-z0-9._-]`, never a path — so a backup can't
+be steered outside the root. An existing name is `409 backup_exists`; no `--backup-root` at startup
+is `403 backups_disabled`.
+
+## Restore: offline, verified, lock-checked
+
+`durable restore` is the offline twin — it never calls the server. It verifies the backup's
+manifest and every file's checksum, then writes a complete journal directory. It refuses the two
+mistakes that matter: an unrestorable source, and **a target a live server holds** — the journal's
+lock is checked, so you can't restore *underneath* a running process:
+
+```sh run=ops exit=1 stderr=1
+durable restore --from backups/nightly --to journal
+```
+
+```text output=ops
+Error: journal is in use: a server holds its journal lock; stop it, or restore into a new directory
+```
+
+The real restore path: stop the server (SIGTERM drains it), restore beside it, start on the
+restored journal:
+
+```sh run=ops
+kill $SRV; for i in $(seq 1 100); do kill -0 $SRV 2>/dev/null || break; sleep 0.1; done
+durable restore --from backups/nightly --to journal-restored
+```
+
+```text output=ops
+restored backups/nightly -> journal-restored
+```
+
+```sh run=ops
+./target/release/durable-server --journal journal-restored --listen 127.0.0.1:58300 \
+  --handler step=http://127.0.0.1:58320/step >server-restored.log 2>&1 &
+SRV=$!
+for i in $(seq 1 150); do curl -sf http://127.0.0.1:58300/health >/dev/null && break; sleep 0.1; done
+```
+
+And the point of the exercise — the run that existed at backup time is there, terminal state and
+`finished_at` intact:
+
+```sh run=ops
+durable inspect --run 1
+```
+
+```json output=ops
+{"finished_at":1774990000000,"id":1,"key":"ops/keep-alive","state":"done","steps":1}
+```
+
+## Practice
+
+- **Backups are cheap; take them often.** `--compact-every-secs` plus a `backup` cron covers most
+  disasters; a backup before every upgrade covers the rest.
+- **Ship them off the host.** A backup that dies with the disk it copied isn't a backup.
+- **Rehearse the restore.** The flow above is the whole drill — if `journal-restored` starts and
+  the runs read back, your backups are real.
+- **Keep the old journal until the restored one proves itself** — `restored` beside `journal`, not
+  instead of it.
