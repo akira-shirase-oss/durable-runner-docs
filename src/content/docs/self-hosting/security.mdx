@@ -43,12 +43,30 @@ journal itself.
   handler can't be made safe by the runner alone.
 - **Keys are never logged**, and job payloads never appear in the server's log either.
 
+## Per-client limits *(next release)*
+
+On the worker branch now: one address can't hold every connection or spend every request.
+`--rate-limit-per-addr` (100/s default, `429 rate_limited` + `Retry-After`), `--max-conns-per-addr`
+for untrusted peers, and `--max-conns-per-proxy` for trusted proxies — a proxy aggregates clients,
+so it gets its own allowance. `--trusted-proxy` (repeatable CIDR) is the trust line: the client
+address comes from `CF-Connecting-IP` **only** behind those ranges — list your proxy ranges
+precisely, since a too-wide range lets any caller name its own address. IPv6 counts per `/64` with
+a `/48` aggregate; v4-mapped addresses count as IPv4. Details:
+[configuration](/self-hosting/configuration/).
+
+```sh not-run="needs the next release — the flags are on the worker branch, not yet on main"
+durable-server --journal journal --listen 127.0.0.1:58300 --trusted-proxy 103.21.244.0/22 \
+  --max-conns-per-proxy 512 --max-conns-per-addr 64 --rate-limit-per-addr 100
+```
+
 ## Checklist
 
 - [ ] `DURABLE_API_KEY` ≥ 32 chars, generated (`openssl rand -hex 32`), in an env file `0600` — never a flag, never committed.
 - [ ] `DURABLE_READ_KEY` set wherever a read-only credential is enough (Inspector, dashboards).
 - [ ] `--listen` on loopback behind the proxy, or on a private interface only — never a public bind without a proxy plan.
 - [ ] `--open-reads` **off** on anything proxied or shared.
+- [ ] `--trusted-proxy` listing exactly your proxy ranges *(next release)* — a wide range lets a caller claim any client address.
+- [ ] Per-client rate and connection limits on *(next release)* behind anything untrusted.
 - [ ] Handler ports reachable only from the runner host.
 - [ ] Journal and `--backup-root` on local disk, `0700`, service-user owned.
 - [ ] `/ready` driving the load balancer; `space_ok` and `errors` alerting.

@@ -49,6 +49,29 @@ Plus the environment: `DURABLE_API_KEY` (required at startup, ≥ 32 chars) and 
 | `--compact-every-secs` | `0` | automatic compaction period; `0` means only on request (`POST /admin/compact`) |
 | `--max-snapshot-bytes` | `2147483648` (2 GiB) | a compaction whose snapshot would exceed this is refused `409 snapshot_over_budget` |
 
+## Per-client limits
+
+*In the next release, on the worker branch — not on `main` yet.* One address shouldn't be able to
+hold every connection or spend every request: these flags bound per-client pressure at the edge.
+
+| Flag | Default | Bound |
+|---|---|---|
+| `--rate-limit-per-addr` | `100` per second | requests one client address may start; over it, `429 rate_limited` with `Retry-After` |
+| `--max-conns-per-addr` | — | connections one untrusted address may hold at once |
+| `--max-conns-per-proxy` | — | connections one *trusted* proxy may hold — a proxy aggregates many clients, so it gets its own, larger allowance |
+| `--trusted-proxy <CIDR>` | — | repeatable: the proxy ranges the server believes. A client's address comes from `CF-Connecting-IP` **only** when the peer is inside a trusted range; otherwise the peer itself is the client |
+
+The counting shape matters behind NAT and on v6: IPv6 clients are counted per `/64` with a `/48`
+aggregate cap (a host hopping addresses inside its own prefix stays one client, and a whole /48
+can't hide a flood); IPv4-mapped IPv6 addresses count as IPv4. `429 rate_limited` is retryable —
+back off by `Retry-After`, resubmit with the same `op_key`.
+
+```sh not-run="needs the next release — these flags are on the worker branch, not yet on main"
+durable-server --journal journal --listen 127.0.0.1:58300 \
+  --rate-limit-per-addr 100 --max-conns-per-addr 64 --max-conns-per-proxy 512 \
+  --trusted-proxy 103.21.244.0/22 --trusted-proxy 2400:cb00::/32
+```
+
 ## The UI and the loophole
 
 | Flag | Default | Bound |

@@ -70,3 +70,17 @@ A stop-start on the same journal is the upgrade path: stop (drains clean), swap 
 The journal is forward-readable by newer servers — the [changelog](/changelog/) calls out any
 release whose journal format needs attention. Restores from backup are the rollback path when a
 journal can't move forward ([backups](/self-hosting/backups/)).
+
+**What a restart costs, plainly:** an upgrade is a restart plus a replay, and unavailability grows
+with how many runs are queued. On a fast laptop the replay takes about 1 s at 100k live runs, 3 s
+at 300k, 9 s at 800k — so capacity headroom is also upgrade latency. While the server is down its
+socket doesn't answer at all; put Caddy's `lb_try_duration` (or your proxy's equivalent) in front
+and it holds incoming requests through the gap, so clients see a delay, not errors.
+
+```txt title="Caddyfile — hold requests across the restart" not-run="proxy tuning is yours"
+runner.example.com {
+	reverse_proxy 127.0.0.1:58300 {
+		lb_try_duration 10s
+	}
+}
+```

@@ -9,11 +9,21 @@ showing id, `op_key`, live state, step count and finish time — plus a cancel b
 that isn't terminal yet.
 
 ```sh not-run="needs the Inspector's assets built from the app first — npm install && npm run build in its directory, then --ui-dir at server start"
-durable-server --journal journal --listen 127.0.0.1:58300 --ui-dir apps/inspector/dist \
+durable-server --journal journal --listen 127.0.0.1:58300 --ui-dir apps/inspector/build \
   --handler step=http://127.0.0.1:58320/step
 ```
 
 Then open `http://127.0.0.1:58300/inspector` — a local page, on a local server.
+
+The two screens it has. First, the key field — the only thing standing between the page and the
+run list:
+
+![The Inspector's key field, before a key is entered](/shots/inspector-key-1440.png)
+
+Then, once a key is in, the newest-first list — done runs, one still queued, a cancel button on
+anything live:
+
+![The Inspector's run list: two finished runs and one queued](/shots/inspector-runs-1440.png)
 
 ## The key, honestly stored
 
