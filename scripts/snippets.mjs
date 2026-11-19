@@ -36,7 +36,7 @@
 // says so in its info string, `not-run="why"`, so the gap is counted and visible, never silent. One
 // that could run but isn't wired up yet says `not-run="todo: why"`, and is counted apart.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -250,6 +250,64 @@ export function matches(actual, expect) {
 		.every((line) => seen.has(line));
 }
 
+// ---------------------------------------------------------------- the product checkout
+
+const RUNNER_URL = 'https://github.com/akira-shirase-oss/durable-runner.git';
+/**
+ * The ref the examples run against: the release the pages document. DURABLE_RUNNER_REF overrides
+ * it — CI's nightly sets `main` so a product change that moves under the docs is caught there.
+ */
+const RUNNER_REF = process.env.DURABLE_RUNNER_REF || 'v1.0.0';
+
+const gitIn = (dir, ...args) => {
+	const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+	if (result.status !== 0) {
+		console.error(`snippets: git ${args.join(' ')} in ${relative(ROOT, dir)} failed:\n${result.stderr}`);
+		process.exit(1);
+	}
+	return result.stdout.trim();
+};
+const runOrDie = (cmd, args) => {
+	const result = spawnSync(cmd, args, { stdio: 'inherit' });
+	if (result.status !== 0) {
+		console.error(`snippets: ${cmd} ${args.join(' ')} failed — see above`);
+		process.exit(1);
+	}
+};
+
+/**
+ * One mechanism owns the product source: before any step runs, .snippets/work/durable-runner is a
+ * durable-runner checkout at RUNNER_REF. A missing dir is cloned; a dir that exists without .git —
+ * a restored build cache holding only target/, as CI's rust-cache step leaves — is fetched into
+ * rather than deleted, so the cache still warms the build. An existing checkout is left alone
+ * unless DURABLE_RUNNER_REF was set explicitly. Afterwards the dir must be a source tree, not just
+ * a directory — anything else stops the suite here with a readable message, not a cargo error.
+ */
+function ensureRunnerCheckout() {
+	const dir = join(workdir, 'durable-runner');
+	mkdirSync(workdir, { recursive: true });
+	if (!existsSync(join(dir, '.git'))) {
+		if (existsSync(dir)) {
+			console.error(`snippets: ${relative(ROOT, dir)} exists but is not a checkout — fetching ${RUNNER_REF} into it (keeps a restored target/ cache)`);
+			// --template= skips copying sample hooks — a scratch checkout doesn't need them.
+			runOrDie('git', ['init', '-q', '--template=', dir]);
+			gitIn(dir, 'remote', 'add', 'origin', RUNNER_URL);
+			gitIn(dir, 'fetch', '-q', '--depth', '1', 'origin', RUNNER_REF);
+			gitIn(dir, 'checkout', '-q', '--detach', 'FETCH_HEAD');
+		} else {
+			runOrDie('git', ['clone', '-q', '--depth', '1', '-b', RUNNER_REF, RUNNER_URL, dir]);
+		}
+	} else if (process.env.DURABLE_RUNNER_REF) {
+		gitIn(dir, 'fetch', '-q', '--depth', '1', 'origin', RUNNER_REF);
+		gitIn(dir, 'checkout', '-q', '--detach', 'FETCH_HEAD');
+	}
+	if (!existsSync(join(dir, 'Cargo.toml'))) {
+		console.error(`snippets: ${relative(ROOT, dir)} is not a durable-runner source tree — remove it and rerun`);
+		process.exit(1);
+	}
+	console.error(`snippets: durable-runner ${gitIn(dir, 'describe', '--tags', '--always')} (ref ${RUNNER_REF})`);
+}
+
 // ---------------------------------------------------------------- running a suite
 
 function runAll(steps) {
@@ -407,6 +465,7 @@ function main() {
 		if (list.length > 0) console.log(`snippets: suite ${name}, ${list.length} steps`);
 		return list;
 	});
+	ensureRunnerCheckout();
 	const failed = !runAll(ordered);
 	if (flag('update')) update(steps);
 	const checked = steps.filter((step) => step.expect && step.actual !== undefined).length;

@@ -10,9 +10,11 @@
 #   openapi    the draft spec covers every route durable-server declares, and declares none it
 #              doesn't — checked both ways against crates/durable-server/src/main.rs on main.
 #   coverage   every code block on every page runs, is a checked output, or says why it can't (not-run).
-#   snippets   durable-server and durable-cli are built from durable-runner main and started with
-#              the quick start's own commands; then every example on the pages runs, in order, and
-#              its output must match what the page shows (ids, times and secrets normalised).
+#   snippets   durable-server and durable-cli are built from the durable-runner ref the docs pin —
+#              v1.0.0 on pushes, main on the nightly and on a manual run that asks for it — and
+#              started with the quick start's own commands; then every example on the pages runs,
+#              in order, and its output must match what the page shows (ids, times and secrets
+#              normalised).
 name: ci
 
 on:
@@ -22,6 +24,12 @@ on:
   schedule:
     - cron: '41 5 * * *' # nightly: catch durable-runner main moving under the docs
   workflow_dispatch:
+    inputs:
+      runner-ref:
+        description: 'durable-runner ref the examples run against (default: the release the docs document)'
+        default: v1.0.0
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -126,7 +134,7 @@ jobs:
         run: DURABLE_RUNNER_DIR=durable-runner node scripts/check-openapi.mjs
 
   snippets:
-    name: examples run against durable-runner main
+    name: examples run against durable-runner (v1.0.0; main nightly)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -140,9 +148,10 @@ jobs:
       - run: npm ci
       - name: The steps the pages run, in order
         run: node scripts/snippets.mjs --list
-      # The quick start's own install step clones durable-runner, builds durable-server and
-      # durable-cli with the toolchain its rust-toolchain.toml pins, and starts them under
-      # .snippets/work — the same commands the page shows a reader.
+      # scripts/snippets.mjs owns the product checkout at the ref DURABLE_RUNNER_REF names — the
+      # release tag on pushes, main on the nightly. It clones or fetches before step 0 (into the
+      # dir rust-cache may already have restored, keeping the warm target/), so the quick start's
+      # own install block finds a checkout and only builds, as it does for a reader.
       - name: Install the pinned Rust toolchain the product asks for
         run: |
           rustup --version
@@ -152,6 +161,8 @@ jobs:
         with:
           workspaces: .snippets/work/durable-runner
       - name: Run every example against the real server
+        env:
+          DURABLE_RUNNER_REF: ${{ github.event_name == 'schedule' && 'main' || inputs.runner-ref || 'v1.0.0' }}
         run: node scripts/snippets.mjs
       - name: The server's journal directory, if anything failed
         if: failure()

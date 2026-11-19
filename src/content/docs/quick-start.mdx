@@ -15,7 +15,7 @@ handler, and `curl`.
 ## 1. Get the source and build
 
 ```sh run=quickstart step=install
-test -d durable-runner || git clone --depth 1 -b v1.0.0 https://github.com/akira-shirase-oss/durable-runner.git
+test -d durable-runner/.git || git clone --depth 1 -b v1.0.0 https://github.com/akira-shirase-oss/durable-runner.git
 cd durable-runner
 cargo build --release --locked -p durable-server -p durable-cli
 ```
