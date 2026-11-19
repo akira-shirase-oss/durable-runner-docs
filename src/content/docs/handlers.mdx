@@ -1,0 +1,171 @@
+---
+title: Step handlers
+description: The contract a handler implements — POST {input, idem_key}, the attempt headers, the reconciliation probe — shown on the wire against a handler on this machine.
+---
+
+A step handler is an HTTP endpoint you register at server start (`--handler name=URL`). It is the
+only thing the runner ever calls, on a private network, **unsigned** — the allowlist *is* the
+security boundary. This page runs a handler on `127.0.0.1:58320` and shows exactly what arrives.
+
+## The contract
+
+| | What the runner does | What the handler must do |
+|---|---|---|
+| **Call** | `POST` to the registered URL, body `{"input": <bytes>, "idem_key": "<op_key>/<step_index>"}`, deadline 20 s by default (`--step-timeout-ms`, max 30 s) | Do the work; reply `2xx` with a body ≤ 256 KiB — it becomes the step's checkpoint |
+| **Always sent** | `x-idempotency-key: <op_key>/<step_index>` | Dedupe on it: a second call with the same key returns the first call's stored result instead of repeating the work |
+| **With context** | `x-durable-run-id`, `x-durable-step`, `x-durable-attempt` | Optional, for your own logs and metrics |
+| **Probe** | `GET <url>?idem_key=<key>` after a lost reply | `200` if that key's work landed (any body), anything else if not |
+
+The rules that follow from it:
+
+- **`2xx` means done.** The reply body is journaled as the step's output — keep it small; over
+  256 KiB the attempt counts as failed.
+- **`4xx`/`5xx` means failed attempt** — the step retries up to 5 attempts with bounded backoff,
+  then the run ends `failed:step:N`.
+- **Timeout or a cut connection means *unknown*, not failed.** The runner can't know whether the
+  call landed, so it asks the probe before deciding — that is why the probe must answer from your
+  *records* (dedupe table, outbox, database), not from whether a request is in flight.
+- **The `idem_key` never changes across attempts.** `op_key/step_index` — attempt 5 carries the
+  same key attempt 1 did. Your dedupe is what makes at-least-once safe; `x-durable-attempt` tells
+  you which try you're on.
+
+## Watch it on the wire
+
+This handler logs every call it receives to `handler-seen.jsonl` — the pilot handler with a
+ledger added (file contents as the page would have you write it):
+
+```python title="logger.py" run=handlers file=logger.py
+#!/usr/bin/env python3
+"""A step handler that writes every request it gets to handler-seen.jsonl."""
+import http.server, json, sys, urllib.parse
+
+SEEN = {}
+
+class H(http.server.BaseHTTPRequestHandler):
+    def _reply(self, code, body=b""):
+        self.send_response(code)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def do_POST(self):
+        n = int(self.headers.get("content-length", 0))
+        req = json.loads(self.rfile.read(n) or b"{}")
+        key = req.get("idem_key", "")
+        seen = {
+            "method": "POST",
+            "path": self.path,
+            "headers": {k: self.headers[k] for k in (
+                "x-idempotency-key", "x-durable-run-id",
+                "x-durable-step", "x-durable-attempt", "content-type")},
+            "body": req,
+        }
+        if key not in SEEN:
+            SEEN[key] = {"ok": True, "step_input_len": len(req.get("input", []))}
+            with open("handler-seen.jsonl", "a") as f:
+                f.write(json.dumps(seen) + "\n")
+        self._reply(200, json.dumps(SEEN[key]).encode())
+
+    def do_GET(self):
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        self._reply(200 if q.get("idem_key", [""])[0] in SEEN else 404)
+
+    def log_message(self, *a):
+        pass
+
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+```
+
+{/* snippet handlers: snippets/restart-logger.sh */}
+
+The runner registers it as `log` and submits one step to it:
+
+```sh run=handlers
+alias durable="durable-cli --server http://127.0.0.1:58300"
+durable submit --op-key handlers/wire-demo --step greet=log --input '{"who":"ada"}'
+```
+
+```json output=handlers
+{"run_id":1}
+```
+
+```sh run=handlers
+for i in $(seq 1 60); do s=$(durable inspect --run 1); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done; echo "$s"
+```
+
+```json output=handlers
+{"finished_at":1774990000000,"id":1,"key":"handlers/wire-demo","state":"done","steps":1}
+```
+
+And the ledger shows what actually arrived — the idempotency key is `op_key` + `/` + step index,
+`input` is the raw bytes, and the attempt headers carry the run, step and try:
+
+```sh run=handlers
+cat handler-seen.jsonl
+```
+
+```json output=handlers
+{
+  "method": "POST",
+  "path": "/log",
+  "headers": {
+    "x-idempotency-key": "handlers/wire-demo/0",
+    "x-durable-run-id": "1",
+    "x-durable-step": "0",
+    "x-durable-attempt": "1",
+    "content-type": "application/json"
+  },
+  "body": {
+    "idem_key": "handlers/wire-demo/0",
+    "input": [
+      123,
+      34,
+      119,
+      104,
+      111,
+      34,
+      58,
+      34,
+      97,
+      100,
+      97,
+      34,
+      125
+    ]
+  }
+}
+```
+
+The probe is plain `GET` — the handler's own record answers it. A key the work landed under gets
+`200`; one it never saw gets `404`:
+
+```sh run=handlers
+curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:58320/log?idem_key=handlers/wire-demo/0"
+curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:58320/log?idem_key=never/0"
+```
+
+```text output=handlers
+200
+404
+```
+
+## Writing your own
+
+- **Store by `idem_key`, return stored results.** Effect first or record first — either works, but
+  the probe and the dedupe must see the same truth, so write the record with the effect, in one
+  transaction where you can.
+- **Answer the probe from the record, not the request.** "Is `K` done?" — not "is a request for
+  `K` in flight?"
+- **Keep replies small.** Under 256 KiB, or the attempt counts as failed.
+- **Fit inside the deadline.** 20 s per attempt by default; work that can't fit belongs behind a
+  two-phase handler (accept → poll), which is a v2 conversation.
+- **Stay on a private network.** The runner's calls are unsigned; anything that can reach the
+  handler can invoke it. [Security](/self-hosting/security/) has the checklist.
+
+## Where next
+
+- [Concepts](/concepts/) — why at-least-once plus one key is the honest model.
+- [Errors](/errors/) — the `unregistered_handler` refusal, and what counts as a failed attempt.
+- [Self-hosting](/self-hosting/configuration/) — `--handler`, `--step-timeout-ms`, `--reply-timeout-ms`.

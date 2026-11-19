@@ -1,0 +1,122 @@
+---
+title: Errors
+description: Every error is {"code", "error"} — the full code table, which ones to retry (with the same op_key), and real responses for the common cases.
+---
+
+Every error from `durable-server` is one envelope:
+
+```json not-run="the envelope's shape; the real responses below show it filled in"
+{"code":"unregistered_handler","error":"unregistered handler: nope"}
+```
+
+`code` is stable — branch on it. `error` is a sentence for the operator and may get more specific
+between releases; don't match on it. These are real responses, against `https://runner.example.com`:
+
+## The 4xxes — fix the request first
+
+Malformed JSON gets `400 bad_body`; JSON that parses but doesn't fit the schema gets `422` with the
+same code (the missing field is named in `error`):
+
+```sh run=jobs
+curl -s -i -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d 'not json' https://runner.example.com/jobs
+```
+
+```http output=jobs
+HTTP/1.1 400 Bad Request
+content-type: application/json
+content-length: 105
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"bad_body","error":"Failed to parse the request body as JSON: expected ident at line 1 column 2"}
+```
+
+A run that never was is `404 not_found`:
+
+```sh run=jobs
+curl -s -i -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/999
+```
+
+```http output=jobs
+HTTP/1.1 404 Not Found
+content-type: application/json
+content-length: 42
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"not_found","error":"no such run"}
+```
+
+A step bound to a handler the server never registered is `409 unregistered_handler` — refused at
+submit, before anything is journaled:
+
+```sh run=jobs
+curl -s -i -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"demo/bad","spec":{"version":1,"steps":[{"name":"x","handler":"nope"}],"input_b64":""}}' \
+  https://runner.example.com/jobs
+```
+
+```http output=jobs
+HTTP/1.1 409 Conflict
+content-type: application/json
+content-length: 68
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"unregistered_handler","error":"unregistered handler: nope"}
+```
+
+And a spec past its bounds is `409 over_limits` — the error text is the limit list:
+
+```sh run=jobs
+curl -s -i -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d "{\"op_key\":\"$(python3 -c 'print("k"*300)')\",\"spec\":{\"version\":1,\"steps\":[],\"input_b64\":\"\"}}" \
+  https://runner.example.com/jobs
+```
+
+```http output=jobs
+HTTP/1.1 409 Conflict
+content-type: application/json
+content-length: 152
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"over_limits","error":"job spec over limits (op_key 1-256 bytes without control characters, names 1-128 bytes, input 64 KiB, at most 64 steps)"}
+```
+
+## Every code
+
+| Status | `code` | Cause |
+|---|---|---|
+| 400 | `bad_query` | unparseable query (`?order=sideways`) |
+| 400 | `bad_path` | a path parameter that isn't a run id |
+| 400 | `bad_input` | `input_b64` isn't canonical padded base64 |
+| 400 | `invalid_backup_name` | backup name outside `1–64 of [A-Za-z0-9._-]`, or starting with `.` |
+| 400 / 422 | `bad_body` | body isn't JSON, or doesn't match the schema |
+| 408 | `timeout` | the body didn't finish inside its deadline |
+| 413 | `body_too_large` | request body over 256 KiB |
+| 415 | `bad_content_type` | a body sent without `content-type: application/json` |
+| 401 | `unauthorized` | no key, or a wrong one |
+| 403 | `forbidden` | the read key on a write or admin route |
+| 403 | `backups_disabled` | backup called without `--backup-root` at startup |
+| 404 | `not_found` | no such run |
+| 409 | `refused` | a domain refusal — e.g. cancelling a run that's already terminal |
+| 409 | `unregistered_handler` | a step's handler isn't in `--handler` |
+| 409 | `over_limits` | spec over a bound (the message lists them) |
+| 409 | `compaction_running` | a second `POST /admin/compact` while one runs |
+| 409 | `snapshot_over_budget` | a snapshot would exceed `--max-snapshot-bytes` |
+| 409 | `backup_exists` | that backup name is already taken |
+| 500 | `internal` | a bug — the server's stderr has the detail |
+| 503 | `busy` | the journal's reserve or write window is full; retry later |
+| 503 | `at_capacity` | `--max-live-runs` or `--max-index-bytes` reached |
+| 503 | `engine_stopped` | the engine is down for restart |
+| 503 | `timeout` | the engine didn't answer in time |
+| 503 | `no_space` | free disk below `--reserve-bytes`, or ENOSPC mid-write |
+| 503 | `unavailable` | the free-space probe itself failed |
+| 503 | `journal_unavailable` | a commit failed — nothing was acknowledged |
+
+## How to retry
+
+- **Retry with the same `op_key`:** every `503`, `408`, `timeout`, `journal_unavailable` — these say
+  "not now", and `op_key` dedupe is what makes the retry free of duplicates.
+- **Don't retry as-is:** `400`, `409`, `401`, `403`, `404`, `413`, `415` — change the request (or the
+  key) first.
+- **A note on `503 timeout`:** the engine may still commit a submit after you saw the timeout. Retry
+  the same `op_key`; if it committed, you get the same `run_id` back.

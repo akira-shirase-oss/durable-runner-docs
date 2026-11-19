@@ -1,0 +1,180 @@
+---
+title: The CLI
+description: durable-cli's eight subcommands — submit, inspect, list, cancel, diag, compact, backup, restore — with the server address and the key rules.
+---
+
+{/* snippet cli: snippets/restart.sh */}
+
+`durable-cli` is the operator's CLI: every command is one HTTP call to a running `durable-server`,
+answered as one line of compact JSON — except `restore`, which works on files while the server is
+stopped. These commands run against a server on this machine, `http://127.0.0.1:58300` — the CLI's
+own default `--server`, spelled out below so the address stays visible. Set up an alias once (the
+quick start does the same):
+
+```sh run=cli
+alias durable="durable-cli --server http://127.0.0.1:58300"
+```
+
+**Keys come from the environment, never the command line** — `DURABLE_API_KEY` goes on every call
+as the Bearer token; reads fall back to `DURABLE_READ_KEY`. Nothing secret ever lands in a process
+listing or shell history.
+
+## submit — start a run
+
+```sh run=cli
+durable submit --op-key reports/weekly --step gather=step --input '{"week":"2026-W47"}'
+```
+
+```json output=cli
+{"run_id":1}
+```
+
+- `--op-key` (required) dedupes: retry the same key, get the same run.
+- `--step name=handler` repeats in order — each name is the step's, each handler a registered one.
+- `--input` takes bytes inline or `@path` from a file (base64'd for you).
+- `--delay-ms N` schedules the start `N` milliseconds out — the CLI computes `not_before`.
+
+```sh run=cli
+durable submit --op-key reports/weekly --step gather=step --input '{"week":"2026-W47"}'
+```
+
+```json output=cli
+{"run_id":1}
+```
+
+## inspect — one run
+
+```sh run=cli
+for i in $(seq 1 60); do s=$(durable inspect --run 1); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done; echo "$s"
+```
+
+```json output=cli
+{"finished_at":1774990000000,"id":1,"key":"reports/weekly","state":"done","steps":1}
+```
+
+## list — page the runs
+
+```sh run=cli
+durable submit --op-key reports/later --step gather=step --delay-ms 3600000 --input 'scheduled for next hour'
+```
+
+```json output=cli
+{"run_id":2}
+```
+
+`list` is oldest-first; `--newest` flips it, `--limit` caps a page, and `--before`/`--after` take
+the cursor the previous page returned:
+
+```sh run=cli
+durable list
+```
+
+```json output=cli
+{"next_after":null,"runs":[{"finished_at":1774990000000,"id":1,"key":"reports/weekly","state":"done","steps":1},{"finished_at":null,"id":2,"key":"reports/later","state":"queued","steps":1}]}
+```
+
+```sh run=cli
+durable list --newest --limit 1
+```
+
+```json output=cli
+{"next_before":2,"runs":[{"finished_at":null,"id":2,"key":"reports/later","state":"queued","steps":1}]}
+```
+
+## cancel — stop dispatching
+
+```sh run=cli
+durable cancel --run 2
+```
+
+```json output=cli
+{"cancelled":2}
+```
+
+```sh run=cli
+durable inspect --run 2
+```
+
+```json output=cli
+{"finished_at":1774990000000,"id":2,"key":"reports/later","state":"cancelled","steps":1}
+```
+
+## diag — operational counters
+
+Everything [monitoring](/self-hosting/monitoring/) watches, in one line — live and active runs,
+index and journal growth, per-state counts, space status:
+
+```sh run=cli
+durable diag
+```
+
+```json output=cli
+{
+  "active_runs": 0,
+  "dedup_keys": 2,
+  "discarded_tail_bytes": 0,
+  "errors": {},
+  "generation": 1,
+  "index_bytes": 463,
+  "journal_batches": 5,
+  "largest_batch": 1,
+  "largest_batch_bytes": 264,
+  "live_runs": 2,
+  "records_written": 5,
+  "space_ok": true,
+  "stale_generations": 0,
+  "states": {
+    "cancelled": 1,
+    "done": 1
+  }
+}
+```
+
+## compact — snapshot and reclaim
+
+```sh run=cli
+durable compact
+```
+
+```json output=cli
+{"generation":2}
+```
+
+Writes a snapshot as a new journal generation and retires what it covers — the journal's steady
+size, not an emergency measure. A second call while one runs comes back `409 compaction_running`.
+
+## backup — a consistent copy
+
+```sh run=cli
+durable backup --name nightly
+```
+
+```json output=cli
+{"backup":"nightly"}
+```
+
+Needs `--backup-root` at server start; the name is a plain directory name under it
+(`1–64 of [A-Za-z0-9._-]`, never a path). The copy is consistent and checksummed — safe to ship
+elsewhere while the server keeps running.
+
+## restore — offline only
+
+`restore` is the one command that never touches the server: it verifies a backup file-by-file and
+writes out a journal directory — and it refuses to overwrite a journal a live server holds:
+
+```sh run=cli exit=1 stderr=1
+durable restore --from backups/nightly --to journal
+```
+
+```text output=cli
+Error: journal is in use: a server holds its journal lock; stop it, or restore into a new directory
+```
+
+The full restore flow — stop, restore, start on the restored journal — is on
+[Backups and restore](/self-hosting/backups/).
+
+## Exit codes and scripting
+
+Success is `0` with one line of JSON on stdout; failures print `Error: <status>: <message>` to
+stderr and exit non-zero, so `set -e` and pipes behave. A `jq` pipeline is all you need to wait on
+a run, page a list, or alert on `space_ok:false`.

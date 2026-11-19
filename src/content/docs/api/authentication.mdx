@@ -1,0 +1,95 @@
+---
+title: Authentication and keys
+description: DURABLE_API_KEY and DURABLE_READ_KEY — which routes each opens, how 401 and 403 differ, and why --open-reads must never sit behind a proxy.
+---
+
+{/* snippet jobs: snippets/restart-jobs.sh */}
+
+Two environment variables hold the keys; the server reads them at startup. Every request that
+isn't `/health` or `/ready` carries `Authorization: Bearer <key>`.
+
+| Key | Opens | Refused |
+|---|---|---|
+| `DURABLE_API_KEY` (required) | everything | — |
+| `DURABLE_READ_KEY` (optional) | `GET /jobs`, `GET /jobs/{id}` | submits, cancels, spec read-back, admin |
+| none | `GET /health`, `GET /ready` only | everything else |
+
+## 401 versus 403
+
+No key — or a wrong one — is a `401`: the server cannot place you at all. A *valid* read key on a
+write route is a `403`: you are known, and refused. The distinction matters operationally — `401`
+usually means a missing header or a stale key, `403` means the wrong key type.
+
+```sh run=jobs
+curl -s -i https://runner.example.com/jobs
+```
+
+```http output=jobs
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+content-length: 90
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"unauthorized","error":"missing or invalid API key (Authorization: Bearer <key>)"}
+```
+
+```sh run=jobs
+curl -s -i -X POST -H "Authorization: Bearer $DURABLE_READ_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"k","spec":{"version":1,"steps":[],"input_b64":""}}' https://runner.example.com/jobs
+```
+
+```http output=jobs
+HTTP/1.1 403 Forbidden
+content-type: application/json
+content-length: 106
+date: Wed, 18 Nov 2026 00:00:00 GMT
+
+{"code":"forbidden","error":"this key may only read (DURABLE_READ_KEY); this route needs DURABLE_API_KEY"}
+```
+
+The read key *does* read — that is its point:
+
+```sh run=jobs
+curl -s -H "Authorization: Bearer $DURABLE_READ_KEY" https://runner.example.com/jobs
+```
+
+```json output=jobs
+{"next_after":null,"runs":[]}
+```
+
+And one route is write-key-only even for reads: `GET /jobs/{id}/spec` returns the submitted input,
+which may be customer content, so the read key is refused there too.
+
+## Key hygiene
+
+- **Both keys live in environment variables, never in files or arguments.** The CLI reads the same
+  `DURABLE_API_KEY`/`DURABLE_READ_KEY` the server does — nothing passes on a command line, so keys
+  don't land in shell history or process listings.
+- **Minimum 32 characters, and the two must differ** — the server refuses to start otherwise.
+  `openssl rand -hex 32` is the right generator.
+- **Rotate by restart.** The server reads keys once, at startup; a new key means a restart.
+- **Give out the read key wherever a credential might leak.** The [Inspector](/inspector/) takes a
+  key in the browser — give it `DURABLE_READ_KEY`; it stays in `sessionStorage` only, so it dies
+  with the tab. CI logs, dashboards, laptops that might lose a key: same rule.
+
+## `--open-reads`: the loopback-only escape hatch
+
+`durable-server --open-reads` drops the key requirement for `GET /jobs*` — for a developer's own
+machine. Two guards make that safe, and both assume the request really is local:
+
+- it binds and accepts loopback only;
+- it checks the `Host` header against the listen address, so a browser DNS-rebind can't read it.
+
+**Never put an `--open-reads` server behind a proxy.** A proxy forwards remote requests with a
+loopback-looking origin, defeating both guards. If reads need auth on a proxied deployment — and
+they do — leave `--open-reads` off and distribute `DURABLE_READ_KEY`.
+
+```sh not-run="a deployment flag, not a page demo — --listen stays on loopback and --handler looks as it does in the quick start"
+durable-server --journal journal --open-reads
+```
+
+## Where next
+
+- [Security](/self-hosting/security/) — the whole checklist: keys, handlers, proxies, storage.
+- [Inspector](/inspector/) — which key to paste, and where it's kept.

@@ -1,0 +1,230 @@
+---
+title: Jobs
+description: The lifecycle of a run — submit under an op_key, watch states move, schedule, cancel, read a spec back, and page through the run list.
+---
+
+Everything below talks to `https://runner.example.com` — stand in your own server. The routes are
+the same ones the [quick start](/quick-start/) runs on `127.0.0.1`.
+
+A **job** is what you submit; a **run** is what the server executes. `POST /jobs` takes an `op_key`
+and a spec, commits it to the journal, and answers with a `run_id`. From then on the run moves
+through states until it lands in a terminal one — `done`, `failed:step:N` or `cancelled`.
+
+## Submit
+
+```sh run=jobs
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"invoices/march-run","spec":{"version":1,"steps":[{"name":"collect","handler":"invoices"},{"name":"emit","handler":"reports"}],"input_b64":"eyJtb250aCI6IjIwMjYtMDMifQ=="}}' \
+  https://runner.example.com/jobs
+```
+
+```json output=jobs
+{
+  "run_id": 1
+}
+```
+
+The spec is small on purpose: `version` (always `1`), the `steps` in order — each a name plus the
+registered handler it calls — and `input_b64`, the run's input as standard base64 (64 KiB decoded,
+at most). Step and handler names are 1–128 bytes; `op_key` is 1–256 bytes without control
+characters. Anything bigger is `409 over_limits` — the refusal is the limit list itself.
+
+`run_id` arrives *after* the journal commit: an acknowledged id is durable before it is useful.
+The deduplication is the `op_key` — resubmit it, even with a different spec, and the first run
+answers again:
+
+```sh run=jobs
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"invoices/march-run","spec":{"version":1,"steps":[{"name":"other","handler":"invoices"}],"input_b64":""}}' \
+  https://runner.example.com/jobs
+```
+
+```json output=jobs
+{
+  "run_id": 1
+}
+```
+
+First spec wins. This is the whole reason `op_key` exists: a client that never saw its answer — a
+`503`, a cut connection — retries the same `op_key` and cannot create the work twice.
+
+## Inspect
+
+```sh run=jobs
+for i in $(seq 1 60); do s=$(curl -s -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/1); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done; echo "$s"
+```
+
+```json output=jobs
+{
+  "finished_at": 1795046926464,
+  "id": 1,
+  "key": "invoices/march-run",
+  "state": "done",
+  "steps": 2
+}
+```
+
+`state` is a string, not an enum — read the prefix:
+
+| State | Meaning |
+|---|---|
+| `queued` | committed, waiting for its `not_before` or a dispatch slot |
+| `running:step:N:attempt:M` | step `N` attempt `M` is in flight now |
+| `retry_waiting:step:N:attempt:M` | attempt `M` failed; the run waits out its backoff |
+| `reconciling:step:N` | a reply was lost; the engine is probing before it decides |
+| `done` | every step checkpointed |
+| `failed:step:N` | step `N` spent its attempts |
+| `cancelled` | cancelled before or between steps |
+
+## Schedule
+
+`not_before` (epoch milliseconds) queues a run for later — retries, crons, follow-ups. The CLI's
+`--delay-ms` sets it for you; over HTTP it goes in the submit body:
+
+```sh run=jobs
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"invoices/april-run","spec":{"version":1,"steps":[{"name":"collect","handler":"invoices"}],"input_b64":""},"not_before":9999999999999}' \
+  https://runner.example.com/jobs
+```
+
+```json output=jobs
+{
+  "run_id": 2
+}
+```
+
+While `not_before` is in the future the run stays `queued` — which makes this the moment to read
+back what was submitted:
+
+## The spec, on demand
+
+`GET /jobs/{id}/spec` returns the exact spec a run was submitted with — API key only, since the
+input may be customer content:
+
+```sh run=jobs
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/2/spec
+```
+
+```json output=jobs
+{
+  "id": 2,
+  "key": "invoices/april-run",
+  "spec": {
+    "input_b64": "",
+    "steps": [
+      {
+        "handler": "invoices",
+        "name": "collect"
+      }
+    ],
+    "version": 1
+  }
+}
+```
+
+One caveat: a terminal run frees its input bytes — on a `done`, `failed` or `cancelled` run,
+`input_b64` comes back `""`. The steps always remain.
+
+## Cancel
+
+Cancellation is a journal record, not a recall: it stops the run dispatching anything further — a
+queued run never starts — but it cannot unsend a handler call already made. Cancel run 2 while it
+still waits on its `not_before`:
+
+```sh run=jobs
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/2/cancel
+```
+
+```json output=jobs
+{
+  "cancelled": 2
+}
+```
+
+```sh run=jobs
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/2
+```
+
+```json output=jobs
+{
+  "finished_at": 1795046926507,
+  "id": 2,
+  "key": "invoices/april-run",
+  "state": "cancelled",
+  "steps": 1
+}
+```
+
+`finished_at` stamps every terminal run — cancelled counts.
+
+## List and page
+
+`GET /jobs` pages the run list, oldest first by default (`order=asc`, `after`/`next_after`) or
+newest first (`order=desc`, `before`/`next_before`). `limit` caps a page at 200 (default 50):
+
+```sh run=jobs
+curl -s -X POST -H "Authorization: Bearer $DURABLE_API_KEY" -H "content-type: application/json" \
+  -d '{"op_key":"invoices/may-run","spec":{"version":1,"steps":[{"name":"collect","handler":"invoices"}],"input_b64":""}}' \
+  https://runner.example.com/jobs && \
+for i in $(seq 1 60); do s=$(curl -s -H "Authorization: Bearer $DURABLE_API_KEY" https://runner.example.com/jobs/3); case "$s" in *'"done"'*|*'"failed"'*|*'"cancelled"'*) break;; esac; sleep 0.25; done && \
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" "https://runner.example.com/jobs?limit=2"
+```
+
+```json output=jobs
+{"run_id":3}{"next_after":2,"runs":[{"finished_at":1795046926464,"id":1,"key":"invoices/march-run","state":"done","steps":2},{"finished_at":1795046926507,"id":2,"key":"invoices/april-run","state":"cancelled","steps":1}]}
+```
+
+`next_after` is the cursor for the following page — pass it back as `after`. A `null` cursor is
+the last page:
+
+```sh run=jobs
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" "https://runner.example.com/jobs?limit=2&after=2"
+```
+
+```json output=jobs
+{
+  "next_after": null,
+  "runs": [
+    {
+      "finished_at": 1795046926561,
+      "id": 3,
+      "key": "invoices/may-run",
+      "state": "done",
+      "steps": 1
+    }
+  ]
+}
+```
+
+```sh run=jobs
+curl -s -H "Authorization: Bearer $DURABLE_API_KEY" "https://runner.example.com/jobs?order=desc&limit=2"
+```
+
+```json output=jobs
+{
+  "next_before": 2,
+  "runs": [
+    {
+      "finished_at": 1795046926561,
+      "id": 3,
+      "key": "invoices/may-run",
+      "state": "done",
+      "steps": 1
+    },
+    {
+      "finished_at": 1795046926507,
+      "id": 2,
+      "key": "invoices/april-run",
+      "state": "cancelled",
+      "steps": 1
+    }
+  ]
+}
+```
+
+## Where next
+
+- [Errors](/errors/) — every code the API returns, with real responses.
+- [Handlers](/handlers/) — what the runner POSTs to your endpoint, and the probe.
+- [CLI](/cli/) — the same lifecycle from the shell.
+- [API reference](/api/reference/) — field-level detail, generated from the OpenAPI draft.

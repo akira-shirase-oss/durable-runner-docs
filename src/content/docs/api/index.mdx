@@ -1,0 +1,49 @@
+---
+title: The API, at a glance
+description: Nine routes, two keys — which surface to use for what, and where each one is documented in depth.
+---
+
+Durable Runner's whole surface is nine routes on `durable-server`. The examples here and on the
+feature pages use `https://runner.example.com` — put your own server in.
+
+```sh run=jobs
+curl -s https://runner.example.com/health
+```
+
+```json output=jobs
+{"ok":true}
+```
+
+| Route | Key | What it is |
+|---|---|---|
+| `GET /health` | — | liveness: process up, journal open |
+| `GET /ready` | — | readiness: live counts, space and headroom — `503` with a `code` when not |
+| `POST /jobs` | write | submit a job (`op_key` + spec); deduped on `op_key` |
+| `GET /jobs` | either | page the run list (`order`, `before`/`after`, `limit`) |
+| `GET /jobs/{id}` | either | one run's state |
+| `GET /jobs/{id}/spec` | **write** | the spec it was submitted with — read key refused, the input may be content |
+| `POST /jobs/{id}/cancel` | write | stop dispatching; cannot unsend a call already made |
+| `POST /admin/compact` | write | write a snapshot, retire older journal generations |
+| `POST /admin/backup` | write | a consistent, checksummed copy under `--backup-root` |
+| `GET /admin/diagnostics` | write | operational counters — live runs, index bytes, journal stats |
+
+"Key" means `Authorization: Bearer …`: the write key is `DURABLE_API_KEY`, the read-only key is
+`DURABLE_READ_KEY`; reads accept either. Detail: [Authentication and keys](/api/authentication/).
+
+## Which surface, when
+
+- **Calling from your own service** → the HTTP API, exactly as on [Jobs](/jobs/). Keep the
+  `op_key` stable across your own retries; it is what makes a retry safe.
+- **Operating from a shell** → [the CLI](/cli/) — the same routes as one-line JSON commands,
+  plus `restore`, the only offline operation.
+- **Looking, not scripting** → [the Inspector](/inspector/) — the same read surface in a browser;
+  give it the *read* key.
+- **Generating a client** → the [API reference](/api/reference/) renders the OpenAPI draft and
+  serves the machine-readable document at `/openapi.json`.
+
+## Errors
+
+Every error is the same envelope — `{"code", "error"}` — with a stable `code` you can branch on:
+[Errors](/errors/) lists them all with real responses. The retry-safe ones (`503 at_capacity`,
+`503 no_space`, `503 drain`, `429`) deserve a retry with the **same `op_key`**; the 4xx ones mean
+fix the request first.
