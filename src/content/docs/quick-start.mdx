@@ -7,15 +7,15 @@ This page runs on this machine — it builds Durable Runner from source and runs
 `127.0.0.1`, where every example is real. By the end you will have submitted a job through the CLI
 and the HTTP API, watched it reach `done`, and seen why the same `op_key` gives the same run.
 
-**Durable Runner is at v1.0.0 with source builds** — no release binaries yet, so you build from
-source today; the clone below is at the `v1.0.0` tag. You need a Rust toolchain (the repository
+**Durable Runner is at v1.0.2 with source builds** — no release binaries yet, so you build from
+source today; the clone below is at the `v1.0.2` tag. You need a Rust toolchain (the repository
 pins one in `rust-toolchain.toml`, and rustup uses it automatically), `python3` for the example
 handler, and `curl`.
 
 ## 1. Get the source and build
 
 ```sh run=quickstart step=install
-test -d durable-runner/.git || git clone --depth 1 -b v1.0.0 https://github.com/akira-shirase-oss/durable-runner.git
+test -d durable-runner/.git || git clone --depth 1 -b v1.0.2 https://github.com/akira-shirase-oss/durable-runner.git
 cd durable-runner
 cargo build --release --locked -p durable-server -p durable-cli
 ```

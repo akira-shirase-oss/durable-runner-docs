@@ -266,7 +266,7 @@ const RUNNER_URL = 'https://github.com/akira-shirase-oss/durable-runner.git';
  * The ref the examples run against: the release the pages document. DURABLE_RUNNER_REF overrides
  * it — CI's nightly sets `main` so a product change that moves under the docs is caught there.
  */
-const RUNNER_REF = process.env.DURABLE_RUNNER_REF || 'v1.0.0';
+const RUNNER_REF = process.env.DURABLE_RUNNER_REF || 'v1.0.2';
 
 const gitIn = (dir, ...args) => {
 	const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
