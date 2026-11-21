@@ -224,6 +224,15 @@ export function normalise(text) {
 		.replace(/"finished_at":\d+/g, '"finished_at":<ms>') // epoch millis vary; null stays distinct
 		.replace(/"(not_before|next_run_at)":\d+/g, '"$1":<ms>')
 		.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, '<uuid>')
+		// Byte sizes of internal records and batch-composition counts are encoding
+		// details, not the documented contract: a journal encoding change or a
+		// group-commit boundary moves them between versions while every field the
+		// page means stays put. Listed by name — a field not listed still must
+		// match exactly, so a new volatile field fails loudly until it is judged.
+		// discarded_tail_bytes is NOT listed: 0 means a clean journal, anything else
+		// means the server dropped a torn tail, and the page must say which.
+		.replace(/"((?:index|largest_batch)_bytes)":\d+/g, '"$1":<bytes>')
+		.replace(/"(journal_batches|largest_batch)":\d+/g, '"$1":<n>')
 		.replace(/\b[0-9a-f]{32}\b/g, '<hex32>')
 		.replace(/sha256:[0-9a-f]{64}/g, 'sha256:<hash>')
 		.replace(/\b[0-9a-f]{40}\b/g, '<commit>')

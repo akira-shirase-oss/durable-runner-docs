@@ -39,6 +39,20 @@ test('finished_at: null stays distinct from a timestamp', () => {
 	assert.notEqual(normalise('{"finished_at":null}'), normalise('{"finished_at":1774800000123}'));
 });
 
+test('byte sizes and batch counts drift; meaningful fields still compare', () => {
+	// durable-runner's nightly grew one record's encoding: same page, new bytes.
+	const page = '{"active_runs":0,"index_bytes":463,"journal_batches":5,"largest_batch":1,"largest_batch_bytes":215,"records_written":5,"states":{"done":1}}';
+	const ran = '{"active_runs":0,"index_bytes":470,"journal_batches":6,"largest_batch":2,"largest_batch_bytes":222,"records_written":5,"states":{"done":1}}';
+	assert.equal(normalise(page), normalise(ran), 'encoding details normalise away');
+	// A semantic field moving is a real difference — records_written counts
+	// journaled events and must still compare exactly.
+	const semantic = '{"active_runs":0,"index_bytes":463,"journal_batches":5,"largest_batch":1,"largest_batch_bytes":215,"records_written":6,"states":{"done":1}}';
+	assert.notEqual(normalise(page), normalise(semantic), 'a meaningful count still fails');
+	assert.notEqual(normalise(page), normalise(page.replace('"done":1', '"done":2')), 'a state count still fails');
+	// A dropped journal tail is a meaning, not an encoding detail.
+	assert.notEqual(normalise('{"discarded_tail_bytes":0}'), normalise('{"discarded_tail_bytes":128}'), 'a discarded tail still fails');
+});
+
 test('JSON bodies compare by value, not by formatting', () => {
 	// The same body pretty-printed or on one line is the same body.
 	assert.equal(normalise('{"a":{"x":[2,3]},"b":1}'), normalise('{\n  "a": {\n    "x": [2, 3]\n  },\n  "b": 1\n}'));
