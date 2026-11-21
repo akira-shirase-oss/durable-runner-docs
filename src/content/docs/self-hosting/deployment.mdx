@@ -99,5 +99,7 @@ systemd unit, the Caddyfile above, `cloudflare-ips.sh` (feeds Cloudflare's range
 `--trusted-proxy` and Caddy's trusted proxies), `install.sh`, `upgrade.sh`, `rollback.sh`, a
 `format-guard.sh` that refuses to swap in a binary that can't read the journal, `smoke.sh` as the
 post-install gate, and the daily-backup timer. `upgrade.sh` and `rollback.sh` compare
-`--journal-format` — the highest record version a binary reads — against the journal's before
-touching it, so a downgrade that couldn't parse the journal fails closed instead of eating state.
+`--journal-format` — the journal-shape maxima a binary reads: highest record version, highest
+snapshot (DRIX) version, and whether it parks non-zero-workspace runs — against the journal's
+before touching it, so a downgrade that couldn't parse the journal fails closed instead of
+eating state.

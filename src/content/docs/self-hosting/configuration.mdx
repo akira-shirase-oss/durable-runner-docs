@@ -48,7 +48,7 @@ Plus the environment: `DURABLE_API_KEY` (required at startup, ≥ 32 chars) and 
 | `--backup-root <dir>` | — | enables `POST /admin/backup`; without it, `403 backups_disabled` |
 | `--compact-every-secs` | `0` | automatic compaction period; `0` means only on request (`POST /admin/compact`) |
 | `--max-snapshot-bytes` | `2147483648` (2 GiB) | a compaction whose snapshot would exceed this is refused `409 snapshot_over_budget` |
-| `--journal-format` | — | print the highest journal record version this binary can read, then exit — the deploy kit's format guard compares it to the journal's before an upgrade or rollback |
+| `--journal-format` | — | print the journal-shape maxima this binary reads — highest record version, highest snapshot (DRIX) version, and whether it parks non-zero-workspace runs, as three space-separated numbers (`3 2 1` on v1.0.2) — the deploy kit's format guard compares them to the journal's before an upgrade or rollback |
 
 ## Per-client limits
 
