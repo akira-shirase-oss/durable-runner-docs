@@ -7,8 +7,10 @@
 // The package's dist/browser/standalone.js registers window.Scalar.createApiReference, which the
 // reference page calls; it carries its own styles. In v1.76+ standalone.js is a thin ES-module wrapper
 // around standalone.esm.js, and the wrapper's "use strict" makes an <import> of it throw —
-// so this copies standalone.esm.js itself, the real ESM entry.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+// so this copies standalone.esm.js itself, the real ESM entry. That entry imports its pieces from
+// ./chunks/ (lazy UI parts, icons, the code highlighter), so the chunks folder is copied beside it, without
+// source maps; missing chunks render an empty reference (the live page did, 2026-11-24).
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -29,6 +31,7 @@ const pkg = join(pkgDir, 'package.json');
 const targetDir = join(root, '../public/scalar');
 const target = join(targetDir, 'standalone.esm.js');
 const stamp = join(targetDir, '.version');
+const chunks = join(pkgDir, 'dist/browser/chunks');
 const version = JSON.parse(readFileSync(pkg, 'utf8')).version;
 
 if (!existsSync(source)) {
@@ -37,10 +40,11 @@ if (!existsSync(source)) {
 }
 
 const current = existsSync(stamp) ? readFileSync(stamp, 'utf8').trim() : '';
-if (current !== version || !existsSync(target)) {
+if (current !== version || !existsSync(target) || !existsSync(join(targetDir, 'chunks'))) {
 	rmSync(targetDir, { recursive: true, force: true });
 	mkdirSync(targetDir, { recursive: true });
 	copyFileSync(source, target);
+	if (existsSync(chunks)) cpSync(chunks, join(targetDir, 'chunks'), { recursive: true, filter: (f) => !f.endsWith('.map') });
 	writeFileSync(stamp, `${version}\n`);
 	console.log(`scalar: copied browser build ${version} (${(statSync(target).size / 1e6).toFixed(1)} MB) to public/scalar/`);
 }
