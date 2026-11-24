@@ -360,8 +360,15 @@ site-search dialog {
 	border-inline-end-color: var(--c-line-strong);
 	height: 1.5rem;
 }
-starlight-theme-select label {
-	color: var(--sl-color-gray-2);
+/* The theme switch's view transition (src/components/ThemeSelect.astro): the new theme is revealed by a circle
+   from the button, so the default cross-fade is off. */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+	z-index: 1;
 }
 /* The mobile menu has the sidebar's own Quick start link; the button stays in the header. */
 .mobile-preferences .dr-cta {
