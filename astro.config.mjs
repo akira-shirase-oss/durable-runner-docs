@@ -8,6 +8,13 @@ import { focusableCode } from './src/lib/focusable-code.mjs';
 // The one place the public address lives: canonical URLs, the sitemap, llms.txt and the changelog feed derive from it.
 const site = 'https://docs.durable-runner.404human.dev';
 const repo = 'https://github.com/akira-shirase-oss/durable-runner-docs';
+// Code blocks sit on the palette's soft surface (--c-code-bg in src/styles/theme.css). Literal here,
+// because Expressive Code checks syntax-colour contrast against it at build time.
+/** @param {{ theme: { type: string } }} context */
+const codeBg = ({ theme }) => (theme.type === 'dark' ? '#16181b' : '#f6f7f9');
+// Sharing: one image for every page, rendered by scripts/make-og.mjs into public/og.png.
+const ogImage = `${site}/og.png`;
+const ogAlt = 'Durable Runner Docs: the vermilion app icon and the line "The open-source job runner whose journal outlives its process."';
 
 export default defineConfig({
 	site,
@@ -31,6 +38,20 @@ export default defineConfig({
 			customCss: ['./src/styles/theme.css'],
 			head: [
 				{ tag: 'link', attrs: { rel: 'alternate', type: 'application/rss+xml', title: 'Durable Runner changelog', href: `${site}/changelog/rss.xml` } },
+				// The one webfont (src/styles/theme.css), self-hosted: fetched early so text doesn't swap late.
+				{ tag: 'link', attrs: { rel: 'preload', href: '/fonts/google-sans-flex-latin.woff2', as: 'font', type: 'font/woff2', crossorigin: '' } },
+				// Link previews. Starlight writes og:title, og:description, og:url, og:site_name and
+				// twitter:card (summary_large_image) per page; these add the image, the full locale and the
+				// X account, and replace Starlight's tag where it writes the same one (og:locale "en").
+				{ tag: 'meta', attrs: { property: 'og:image', content: ogImage } },
+				{ tag: 'meta', attrs: { property: 'og:image:type', content: 'image/png' } },
+				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+				{ tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+				{ tag: 'meta', attrs: { property: 'og:image:alt', content: ogAlt } },
+				{ tag: 'meta', attrs: { property: 'og:locale', content: 'en_US' } },
+				{ tag: 'meta', attrs: { name: 'twitter:site', content: '@404humandev' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: ogImage } },
+				{ tag: 'meta', attrs: { name: 'twitter:image:alt', content: ogAlt } },
 				// An accessibility fix to Starlight's output: the search button shows "Search" and its
 				// shortcut (⌘K or Ctrl K), so its name says both, as speech input reads them (WCAG 2.5.3).
 				// Starlight swaps ⌘ for Ctrl off a Mac, sometimes after this runs, so the name follows
@@ -47,11 +68,29 @@ export default defineConfig({
 			expressiveCode: {
 				plugins: [focusableCode()],
 				themes: ['github-dark-default', 'github-light-default'],
+				// Code blocks on the soft surface with the design system's 12 px radius and a hairline.
 				styleOverrides: {
-					borderRadius: '0.5rem',
+					borderRadius: '12px',
+					borderColor: 'var(--sl-color-hairline)',
+					codeBackground: codeBg,
+					uiFontFamily: 'var(--__sl-font)',
+					frames: {
+						editorBackground: codeBg,
+						terminalBackground: codeBg,
+						frameBoxShadowCssValue: 'none',
+						editorTabBarBackground: 'var(--c-code-bar)',
+						editorActiveTabBackground: 'var(--c-code-bg)',
+						editorTabBarBorderBottomColor: 'var(--sl-color-hairline)',
+						terminalTitlebarBackground: 'var(--c-code-bar)',
+						terminalTitlebarBorderBottomColor: 'var(--sl-color-hairline)',
+						terminalTitlebarDotsForeground: 'var(--c-mark)',
+						terminalTitlebarDotsOpacity: '0.45',
+					},
 				},
 			},
 			components: {
+				SiteTitle: './src/components/SiteTitle.astro',
+				SocialIcons: './src/components/SocialIcons.astro',
 				PageTitle: './src/components/PageTitle.astro',
 				Footer: './src/components/Footer.astro',
 			},

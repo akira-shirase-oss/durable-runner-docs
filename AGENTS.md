@@ -26,7 +26,12 @@ repository is read-only reference for this worktree; never edit it from here.
   anything committed (public repo). The only real hostname allowed is
   `docs.durable-runner.404human.dev`. `scripts/check-dist.mjs` enforces most of this in the output.
 - Every example runs in CI or carries a `not-run` reason. Never fake an output block.
-- Neutral theme: Starlight tokens only, no product palette — a shared design system is coming.
+- The brand theme is Durable Runner's design system (the landing page's). The palette is the two blocks
+  at the top of `src/styles/theme.css` (dark, then light); everything else reads it through `var()`,
+  except two mirrors: the code-block background in `astro.config.mjs` (Expressive Code checks contrast
+  against it) and the API reference page, which doesn't load the theme. `scripts/design-contrast.test.mjs`
+  checks the text pairs in both themes. One webfont (Google Sans Flex, self-hosted, OFL); light
+  animations only (no blur, no infinite or scroll effects, hover/focus ≤150 ms).
 - Small commits on `main`; the coordinator reviews and pushes.
 
 ## Verification
