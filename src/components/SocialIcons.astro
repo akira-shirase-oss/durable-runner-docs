@@ -1,0 +1,32 @@
+---
+/**
+ * Starlight's social links (GitHub), plus the brand button "Get started" → the quick start, as on
+ * the landing page. In the header the button takes the last place in the row, after the theme picker
+ * (src/styles/theme.css); the header hides this whole group below 50rem, and the phone's menu hides
+ * the button, since the sidebar there already starts with Quick start.
+ */
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<Default />
+<a class="dr-cta btn-brand" href="/quick-start/">
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<path d="m7 11 2-2-2-2"></path>
+		<path d="M11 13h4"></path>
+		<rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+	</svg>
+	Get started
+</a>
+
+<style>
+	.dr-cta {
+		height: 2.5rem;
+		padding-inline: 0.875rem 1rem;
+		border-radius: 12px; /* the landing's 40 px button size */
+		font-size: 0.875rem;
+	}
+	.dr-cta svg {
+		width: 16px;
+		height: 16px;
+	}
+</style>

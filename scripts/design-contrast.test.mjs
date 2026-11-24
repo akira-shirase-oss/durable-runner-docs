@@ -1,8 +1,8 @@
 // Contrast, computed from the real resolved values — never from token names. Starlight inverts
-// its scale in the light theme (--sl-color-black is near-WHITE there), so a mix that looks dark
+// its scale in the light theme (--sl-color-black is the page there, white), so a mix that looks dark
 // on paper can resolve light. This test parses the actual custom-property declarations the build
 // ships — Starlight's props.css plus our theme.css — resolves var() chains and color-mix(), and
-// checks every text/background pair the changelog and chips rely on, per theme, at WCAG levels.
+// checks every text/background pair the pages rely on, per theme, at WCAG levels.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -29,9 +29,12 @@ function scopes(file) {
 
 const starlight = scopes(join(ROOT, 'node_modules/@astrojs/starlight/dist/style/props.css'));
 const ours = scopes(join(ROOT, 'src/styles/theme.css'));
+// The cascade, as the browser runs it: Starlight's props live in `@layer starlight.base` and theme.css
+// is unlayered, so ANY of our declarations beats any of Starlight's, whatever the selector. Only
+// then does specificity apply, inside each origin: the light override beats plain :root.
 const tokens = {
 	dark: { ...starlight.dark, ...ours.dark },
-	light: { ...starlight.dark, ...ours.dark, ...starlight.light, ...ours.light },
+	light: { ...starlight.dark, ...starlight.light, ...ours.dark, ...ours.light },
 };
 
 // --- a tiny CSS colour resolver: hex, hsl(), var(), color-mix(in srgb, a% b) -------------------
@@ -57,8 +60,11 @@ function resolveColor(raw, scope, depth = 0) {
 	if (v.startsWith('color-mix')) {
 		const inner = v.slice(v.indexOf('(') + 1, v.lastIndexOf(')')).replace(/^in\s+srgb\s*,?\s*/i, '');
 		const parts = inner.split(/,(?![^(]*\))/).map((s) => s.trim()).filter(Boolean);
-		const [a, wa] = parts[0].match(/^(.*?)\s+(\d+(?:\.\d+)?)%$/)?.slice(1) ?? [parts[0], '50'];
-		const [b, wb] = parts[1]?.match(/^(.*?)\s+(\d+(?:\.\d+)?)%$/)?.slice(1) ?? [parts[1] ?? 'transparent', '50'];
+		const [a, pa] = parts[0].match(/^(.*?)\s+(\d+(?:\.\d+)?)%$/)?.slice(1) ?? [parts[0], undefined];
+		const [b, pb] = parts[1]?.match(/^(.*?)\s+(\d+(?:\.\d+)?)%$/)?.slice(1) ?? [parts[1] ?? 'transparent', undefined];
+		// CSS color-mix(): a missing percentage is 100% minus the other one; neither means 50/50.
+		const wa = pa ?? (pb === undefined ? 50 : 100 - +pb);
+		const wb = pb ?? 100 - +wa;
 		const ca = resolveColor(a, scope, depth + 1);
 		const cb = resolveColor(b, scope, depth + 1);
 		const sa = +wa / (+wa + +wb);
@@ -95,8 +101,9 @@ const ratio = (fg, bg) => {
 	return (hi + 0.05) / (lo + 0.05);
 };
 
-// The pairs the changelog and chips actually use — fg token, bg token, minimum, where it shows.
+// The pairs the pages actually use — fg token, bg token, minimum, where it shows.
 const PAIRS = [
+	// the changelog and its chips
 	['--sl-color-text', '--chip-bg', 4.5, 'type chips (every kind)'],
 	['--c-warn-text', '--chip-bg', 4.5, 'security/breaking chip text'],
 	['--c-warn', '--card-bg', 3.0, 'security/breaking icon (non-text)'],
@@ -104,7 +111,26 @@ const PAIRS = [
 	['--card-muted', '--card-bg-hover', 4.5, 'muted text on a hovered card'],
 	['--card-muted', '--card-bg-open', 4.5, 'muted text on an open card'],
 	['--card-muted', '--sl-color-accent-low', 4.5, 'the count inside a pressed filter chip'],
+	['--sl-color-accent-high', '--sl-color-accent-low', 4.5, 'a pressed filter chip; the sidebar\'s current page'],
 	['--sl-color-gray-2', '--chip-bg', 4.5, 'the plain chip body text'],
+	['--sl-color-text-accent', '--card-bg-open', 4.5, 'a link inside an open card'],
+	// every page
+	['--sl-color-text', '--sl-color-bg', 4.5, 'body text'],
+	['--sl-color-white', '--sl-color-bg', 4.5, 'headings and strong text'],
+	['--sl-color-gray-2', '--sl-color-bg', 4.5, 'sidebar links'],
+	['--sl-color-gray-3', '--sl-color-bg', 4.5, 'muted text: group labels, the table of contents, card descriptions'],
+	['--sl-color-gray-3', '--c-surface', 4.5, 'card descriptions on a hovered card'],
+	['--sl-color-text-accent', '--sl-color-bg', 4.5, 'links'],
+	['--sl-color-text-accent', '--sl-color-bg-inline-code', 4.5, 'a link that is inline code'],
+	['--sl-color-text', '--sl-color-bg-inline-code', 4.5, 'inline code'],
+	['--c-focus', '--sl-color-bg', 3.0, 'the focus ring (non-text)'],
+	['--c-on-cta', '--c-cta', 4.5, 'the brand button label'],
+	['--c-on-cta', '--c-cta-hover', 4.5, 'the brand button label, hovered'],
+	// asides: the kind's ink (title, links) and the body text on each tint
+	...['note', 'tip', 'caution', 'danger'].flatMap((kind) => [
+		[`--c-${kind}-ink`, `--c-${kind}-bg`, 4.5, `${kind} aside title and links`],
+		['--sl-color-white', `--c-${kind}-bg`, 4.5, `${kind} aside body text`],
+	]),
 ];
 
 for (const theme of ['dark', 'light']) {
