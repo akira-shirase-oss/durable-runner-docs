@@ -21,7 +21,7 @@ const need = (path, why) => {
 // -- what must exist -------------------------------------------------------
 // Pages that exist today; content tasks extend this as the docs land.
 for (const page of ['index.html', 'changelog/index.html', 'api/reference/index.html']) need(page, 'a page that must be on the site');
-for (const file of ['openapi.json', 'scalar/standalone.esm.js', 'pagefind/pagefind.js', 'llms.txt', 'llms-full.txt', 'changelog/rss.xml', 'sitemap-index.xml', '_headers', 'robots.txt', 'favicon.svg'])
+for (const file of ['openapi.json', 'scalar/standalone.esm.js', 'pagefind/pagefind.js', 'llms.txt', 'llms-full.txt', 'changelog/rss.xml', 'sitemap-index.xml', '_headers', 'robots.txt', 'favicon.svg', 'og.png'])
 	need(file, 'part of the build');
 need('index.md', 'the Markdown twin of the index');
 
@@ -42,6 +42,25 @@ for (const page of htmlPages) {
 	// /quick-start/index.html → /quick-start.md, /index.html → /index.md
 	const mdPath = rel === 'index.html' ? 'index.md' : rel.replace(/\/index\.html$/, '.md');
 	if (!existsSync(join(DIST, mdPath))) fail(`${mdPath} missing — Markdown twin of ${rel}`);
+}
+
+// -- every page can be found and shared ------------------------------------
+// A description of its own (search snippets and link previews), a canonical URL on the public
+// address with the trailing slash, and the share image.
+const SITE = 'https://docs.durable-runner.404human.dev';
+const descriptions = new Map();
+for (const page of htmlPages) {
+	const rel = relative(DIST, page);
+	const html = readFileSync(page, 'utf8');
+	const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1];
+	if (!description) fail(`${rel}: no meta description`);
+	else if (descriptions.has(description)) fail(`${rel}: the same meta description as ${descriptions.get(description)}`);
+	else descriptions.set(description, rel);
+	const canonical = html.match(/<link rel="canonical" href="([^"]*)"/)?.[1];
+	const want = `${SITE}/${rel === 'index.html' ? '' : rel.replace(/index\.html$/, '')}`;
+	if (canonical !== want) fail(`${rel}: canonical ${canonical ?? '(none)'}, want ${want}`);
+	if (!html.includes(`<meta property="og:image" content="${SITE}/og.png"`)) fail(`${rel}: no og:image`);
+	if (!html.includes('<meta name="twitter:card" content="summary_large_image"')) fail(`${rel}: no large-image twitter:card`);
 }
 
 // -- nothing private leaked -------------------------------------------------

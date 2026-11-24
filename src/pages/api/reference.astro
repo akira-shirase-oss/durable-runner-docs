@@ -12,6 +12,8 @@ const title = 'API reference · Durable Runner Docs';
 const description =
 	'Every route of Durable Runner’s HTTP API — jobs, cancel, admin and health — generated from its OpenAPI document, with request examples and try-it.';
 const canonical = new URL('/api/reference/', Astro.site).href;
+const ogImage = new URL('/og.png', Astro.site).href;
+const ogAlt = 'Durable Runner Docs: the vermilion app icon and the line "The open-source job runner whose journal outlives its process."';
 const paths = Object.keys(spec.paths).length;
 const operations = Object.values(spec.paths).reduce(
 	(sum: number, item) => sum + Object.keys(item as object).filter((key) => ['get', 'post', 'put', 'patch', 'delete'].includes(key)).length,
@@ -30,8 +32,21 @@ const operations = Object.values(spec.paths).reduce(
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<link rel="preload" href="/fonts/google-sans-flex-latin.woff2" as="font" type="font/woff2" crossorigin />
 		<meta property="og:title" content={title} />
+		<meta property="og:type" content="website" />
 		<meta property="og:description" content={description} />
 		<meta property="og:url" content={canonical} />
+		<meta property="og:site_name" content="Durable Runner Docs" />
+		<meta property="og:locale" content="en_US" />
+		{/* The docs' share image and tags, as astro.config.mjs gives every Starlight page. */}
+		<meta property="og:image" content={ogImage} />
+		<meta property="og:image:type" content="image/png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:image:alt" content={ogAlt} />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:site" content="@404humandev" />
+		<meta name="twitter:image" content={ogImage} />
+		<meta name="twitter:image:alt" content={ogAlt} />
 		<script is:inline>
 			// The docs' own theme choice, so this page opens in the same light or dark.
 			(() => {

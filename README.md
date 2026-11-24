@@ -43,6 +43,7 @@ npm run build                  # the site in dist/, checked
 npm test                       # the snippet runner's own tests
 scripts/check.sh               # the gate before every push
 npm run hooks                  # once per clone: git runs that gate before every push
+node scripts/make-og.mjs       # after a design change: re-render public/og.png, the share image
 ```
 
 Running the examples needs `curl`, `python3` and a Rust toolchain. With nothing on the ports the
