@@ -28,6 +28,7 @@ const operations = Object.values(spec.paths).reduce(
 		<meta name="description" content={description} />
 		<link rel="canonical" href={canonical} />
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<link rel="preload" href="/fonts/google-sans-flex-latin.woff2" as="font" type="font/woff2" crossorigin />
 		<meta property="og:title" content={title} />
 		<meta property="og:description" content={description} />
 		<meta property="og:url" content={canonical} />
@@ -43,20 +44,38 @@ const operations = Object.values(spec.paths).reduce(
 			})();
 		</script>
 		<style is:global>
+			/* The docs' design system on a page of its own (src/styles/theme.css holds the full palette):
+			   the same webfont, page, ink, hairline and deep-vermilion accent. */
+			@font-face {
+				font-family: 'Google Sans Flex';
+				font-style: normal;
+				font-weight: 100 1000;
+				font-display: swap;
+				src: url('/fonts/google-sans-flex-latin.woff2') format('woff2');
+				unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+					U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+			}
 			:root {
-				--ink: #0a0a0a;
-				--muted: #5e5e5e;
-				--line: #e5e5e5;
+				--ink: #1e1e1e;
+				--muted: #5c5c5c;
+				--line: #ebebeb;
 				--bg: #ffffff;
-				--accent: #3f3f46;
+				--accent: #c9431a;
+				--focus: #c9431a;
+				--brand-1: #ff9a5c;
+				--brand-2: #f0501f;
+				--brand-glow: #ffd9c2;
+				--brand-edge: #ffffff40;
+				--brand-shade: #b8340f55;
 				color-scheme: light;
 			}
 			:root[data-theme='dark'] {
-				--ink: #f5f5f5;
-				--muted: #9c9c9c;
-				--line: #2a2a2a;
-				--bg: #121212;
-				--accent: #c9c9ce;
+				--ink: #f1f1f1;
+				--muted: #a3a3a3;
+				--line: #24262a;
+				--bg: #0d0e10;
+				--accent: #ff8a5c;
+				--focus: #ff8a5c;
 				color-scheme: dark;
 			}
 			html,
@@ -64,7 +83,26 @@ const operations = Object.values(spec.paths).reduce(
 				margin: 0;
 				background: var(--bg);
 				color: var(--ink);
-				font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+				font-family: 'Google Sans Flex', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+				font-optical-sizing: auto;
+				-webkit-font-smoothing: antialiased;
+			}
+			:focus-visible {
+				outline: 2px solid var(--focus);
+				outline-offset: 2px;
+			}
+			/* The page's heading is for screen readers; Scalar's own title is the visible one. This page
+			   doesn't load the docs' theme.css, so the class is defined here too. */
+			.visually-hidden {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				padding: 0;
+				margin: -1px;
+				overflow: hidden;
+				clip: rect(0, 0, 0, 0);
+				white-space: nowrap;
+				border: 0;
 			}
 			.ref-bar {
 				position: sticky;
@@ -74,10 +112,17 @@ const operations = Object.values(spec.paths).reduce(
 				flex-wrap: wrap;
 				align-items: center;
 				gap: 0.5rem 1rem;
-				padding: 0.625rem 16px;
+				min-height: 4rem;
+				box-sizing: border-box;
+				padding: 0.625rem 1.5rem;
 				background: var(--bg);
 				border-bottom: 1px solid var(--line);
 				font-size: 0.875rem;
+			}
+			@media (max-width: 50rem) {
+				.ref-bar {
+					padding-inline: 1rem;
+				}
 			}
 			.ref-bar a {
 				color: inherit;
@@ -86,8 +131,38 @@ const operations = Object.values(spec.paths).reduce(
 			.ref-home {
 				display: inline-flex;
 				align-items: center;
-				gap: 0.5rem;
-				font-weight: 600;
+				gap: 0.5625rem;
+				border-radius: 10px;
+				font-size: 1.125rem;
+				font-weight: 560;
+				letter-spacing: -0.018em;
+			}
+			.ref-home .label {
+				margin-inline-start: -0.125rem;
+				font-weight: 420;
+				color: var(--muted);
+			}
+			.ref-tile {
+				display: inline-grid;
+				place-items: center;
+				flex: none;
+				width: 30px;
+				height: 30px;
+				border-radius: 8px;
+				color: #ffffff;
+				background:
+					radial-gradient(120% 90% at 22% 8%, var(--brand-glow) 0%, transparent 48%),
+					linear-gradient(150deg, var(--brand-1) 0%, var(--brand-2) 100%);
+				box-shadow:
+					inset 0 0 0 1px var(--brand-edge),
+					inset 0 -6px 12px -6px var(--brand-shade);
+			}
+			.ref-tile svg {
+				width: 58%;
+				height: 58%;
+			}
+			.ref-crumb {
+				color: var(--muted);
 			}
 			.ref-links {
 				display: flex;
@@ -96,9 +171,11 @@ const operations = Object.values(spec.paths).reduce(
 				margin-inline-start: auto;
 				color: var(--muted);
 			}
-			.ref-links a:hover,
-			.ref-home:hover {
-				color: var(--accent);
+			.ref-links a {
+				transition: color 150ms ease-out;
+			}
+			.ref-links a:hover {
+				color: var(--ink);
 			}
 			.ref-note {
 				margin: 0;
@@ -113,6 +190,7 @@ const operations = Object.values(spec.paths).reduce(
 			}
 			.ref-note a {
 				color: var(--accent);
+				text-underline-offset: 0.22em;
 			}
 			noscript p {
 				padding: 1rem 16px;
@@ -121,9 +199,18 @@ const operations = Object.values(spec.paths).reduce(
 	</head>
 	<body>
 		<header class="ref-bar">
-			<a class="ref-home" href="/">Durable Runner Docs</a>
-			<span aria-hidden="true">/</span>
-			<span>API reference</span>
+			<a class="ref-home" href="/" translate="no">
+				<span class="ref-tile" aria-hidden="true">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linejoin="round">
+						<rect x="9.6" y="4.2" width="10.2" height="10.2" rx="2.6" stroke-width="1.6" opacity="0.6"></rect>
+						<rect x="6.9" y="6.9" width="10.2" height="10.2" rx="2.6" stroke-width="1.6" opacity="0.85"></rect>
+						<rect x="4.2" y="9.6" width="10.2" height="10.2" rx="2.6" fill="currentColor" stroke-width="1.6"></rect>
+					</svg>
+				</span>
+				<span>Durable Runner</span> <span class="label">Docs</span>
+			</a>
+			<span class="ref-crumb" aria-hidden="true">/</span>
+			<span class="ref-crumb">API reference</span>
 			<nav class="ref-links" aria-label="Docs">
 				<a href="/">Documentation</a>
 				<a href="/openapi.json">openapi.json</a>
@@ -181,9 +268,9 @@ const operations = Object.values(spec.paths).reduce(
 				proxyUrl: '',
 				metaData: { title: 'API reference · Durable Runner Docs' },
 				customCss: `
-					.scalar-app, .scalar-api-reference { --scalar-font: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; --scalar-font-code: ui-monospace, SFMono-Regular, Menlo, monospace; }
-					.light-mode { --scalar-color-accent: #3f3f46; --scalar-background-1: #ffffff; --scalar-color-3: #636363; }
-					.dark-mode { --scalar-color-accent: #c9c9ce; --scalar-background-1: #121212; --scalar-color-3: #a3a3a3; }
+					.scalar-app, .scalar-api-reference { --scalar-font: 'Google Sans Flex', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; --scalar-font-code: ui-monospace, SFMono-Regular, Menlo, monospace; --scalar-radius: 8px; --scalar-radius-lg: 12px; --scalar-radius-xl: 16px; }
+					.light-mode { --scalar-color-accent: #c9431a; --scalar-background-1: #ffffff; --scalar-color-1: #1e1e1e; --scalar-color-2: #474747; --scalar-color-3: #5c5c5c; --scalar-border-color: #ebebeb; }
+					.dark-mode { --scalar-color-accent: #ff8a5c; --scalar-background-1: #0d0e10; --scalar-color-1: #f1f1f1; --scalar-color-2: #c4c4c4; --scalar-color-3: #a3a3a3; --scalar-border-color: #24262a; }
 				`,
 			});
 		</script>
